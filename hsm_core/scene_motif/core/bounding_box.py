@@ -1,6 +1,20 @@
 import numpy as np
 import numpy.typing as npt
 
+def _validate_centroid(centroid: np.ndarray) -> None:
+    if centroid.shape != (3,):
+        raise ValueError(f"centroid must be shape (3,), got {centroid.shape}")
+
+def _validate_half_size(half_size: np.ndarray) -> None:
+    if half_size.shape != (3,):
+        raise ValueError(f"half_size must be shape (3,), got {half_size.shape}")
+    if np.any(half_size < 0):
+        raise ValueError(f"half_size must contain non-negative values, got {half_size}")
+
+def _validate_coord_axes(coord_axes: np.ndarray) -> None:
+    if coord_axes.shape != (3, 3):
+        raise ValueError(f"coord_axes must be shape (3, 3), got {coord_axes.shape}")
+
 class BoundingBox():
     def __init__(self, 
                  centroid: npt.ArrayLike, 
@@ -48,13 +62,19 @@ class BoundingBox():
     # Corresponding setters for rounding and type conversion
     @centroid.setter
     def centroid(self, centroid: npt.ArrayLike) -> None:
-        self._centroid = np.array(centroid).round(self._round_decimals).astype(float)
+        centroid_arr = np.array(centroid).round(self._round_decimals).astype(float)
+        _validate_centroid(centroid_arr)
+        self._centroid = centroid_arr
     @half_size.setter
     def half_size(self, half_size: npt.ArrayLike) -> None:
-        self._half_size = np.array(half_size).round(self._round_decimals).astype(float)
+        half_size_arr = np.array(half_size).round(self._round_decimals).astype(float)
+        _validate_half_size(half_size_arr)
+        self._half_size = half_size_arr
     @coord_axes.setter
     def coord_axes(self, coord_axes: npt.ArrayLike) -> None:
-        self._coord_axes = np.array(coord_axes).round(self._round_decimals).astype(float).reshape(3, 3, order=self._matrix_order)
+        coord_axes_arr = np.array(coord_axes).round(self._round_decimals).astype(float).reshape(3, 3, order=self._matrix_order)
+        _validate_coord_axes(coord_axes_arr)
+        self._coord_axes = coord_axes_arr
 
     @property
     def min(self) -> np.ndarray:

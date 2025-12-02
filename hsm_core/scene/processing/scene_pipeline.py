@@ -150,7 +150,7 @@ async def process_cleanup_stage(context: dict, cfg: DictConfig|ListConfig) -> di
     end_time = time.time()
     start_time = context.get('start_time', time.time())
     minutes, seconds = divmod(end_time - start_time, 60)
-    print("Scene saved to ", context['output_dir_override'])
+    print("Scene saved to", context['output_dir_override'])
     logger.info(f"\nTime taken: {minutes:.0f}m {seconds:.0f}s")
 
     # logger.info("Saving all VLM sessions")

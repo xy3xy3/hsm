@@ -13,6 +13,7 @@ from typing import Dict, List, Optional, Tuple, TYPE_CHECKING
 import numpy as np
 
 import hsm_core.vlm.gpt as gpt
+from hsm_core.vlm.vlm import create_session
 from ..decomposition import decompose_motif_with_session
 from hsm_core.scene_motif import MotifHierarchy
 from hsm_core.utils import get_logger
@@ -54,8 +55,9 @@ async def process_motif_with_visual_validation(
     logger.info(f"Starting motif processing with pre-computed decomposition")
     std_logger = logging.getLogger('hsm_core.scene_motif.processing')
 
-    decompose_session = gpt.Session(
+    decompose_session = create_session(
         str(PROMPT_DIR / "sm_prompts_decompose.yaml"),
+        output_dir=str(motif_output_dir),
         prompt_info={"MOTIF_DEFINITIONS": yaml.safe_load(open(PROMPT_DIR / "motif_definitions.yaml"))["motifs"]}
     )
 
@@ -74,7 +76,7 @@ async def process_motif_with_visual_validation(
                         len(first_decompose_result) == 2):
                     arrangement_json, validate_response = first_decompose_result
                     if arrangement_json is not None:
-                        logger.info(f"Using decomposition from first attempt")
+                        decompose_session.save_session("decompose_session.json")
                 else:
                     logger.warning(f"Invalid first decomposition result format: {type(first_decompose_result)}")
                     arrangement_json, validate_response = None, None
@@ -87,6 +89,10 @@ async def process_motif_with_visual_validation(
                 arrangement_json, validate_response = await decompose_motif_with_session(
                     motif, std_logger, decompose_session, max_decompose_attempts=2
                 )
+                
+                # Save decompose session after successful decomposition
+                if arrangement_json is not None:
+                    decompose_session.save_session("decompose_session.json")
             
             if arrangement_json is None:
                 logger.info(f"Decomposition failed on attempt {attempt + 1}")
@@ -96,15 +102,21 @@ async def process_motif_with_visual_validation(
             retrieved_furniture = furniture_map[motif.id]
             logger.info(f"Processing arrangement for motif: {motif.id}")
 
-            inference_session = gpt.Session(str(PROMPT_DIR / "sm_prompts_inference.yaml"))
+            inference_session = create_session(
+                str(PROMPT_DIR / "sm_prompts_inference.yaml"),
+                output_dir=str(motif_output_dir)
+            )
             # Reset context to prevent contamination from previous attempts
             success, final_arrangement, main_call, sub_arrangements, sub_arr_objs = await build_arrangement_from_json(
                 inference_session, arrangement_json, motif.object_specs, retrieved_furniture)
             
             if not success:
+                inference_session.save_session("generation_session.json")
                 logger.info(f"Arrangement processing failed on attempt {attempt + 1}")
                 decompose_session.add_feedback(f"The generated arrangement ({main_call}) could not be executed.")
                 continue
+
+            inference_session.save_session("generation_session.json")
 
             # Step 3: Apply spatial optimization before visual validation
             make_tight = force_make_tight
@@ -140,6 +152,8 @@ async def process_motif_with_visual_validation(
 
                     if hierarchy and hierarchy.root:
                         hierarchy.set_arrangement(hierarchy.root, final_arrangement)
+                        # Ensure hierarchy is attached to arrangement for later extraction
+                        setattr(final_arrangement, '_hierarchy', hierarchy)
 
                     final_arrangement = optimize_sm(
                         final_arrangement,
@@ -193,7 +207,10 @@ async def process_motif_with_visual_validation(
             
             if not skip_visual_validation and combined_fig is not None:
                 logger.info(f"Visualization generated successfully")
-                validate_session = gpt.Session(str(PROMPT_DIR / "sm_prompts_inference.yaml"))
+                validate_session = create_session(
+                    str(PROMPT_DIR / "sm_prompts_inference.yaml"),
+                    output_dir=str(motif_output_dir)
+                )
                 try:
                     logger.info(f"Sending scene motif to VLM for visual validation...")
                     logger.info(f"Validating scene motif description: '{motif.description}'")
@@ -215,8 +232,10 @@ async def process_motif_with_visual_validation(
                             visual_validation_passed = False
                             visual_feedback = validation_response.get('feedback', 'Visual validation failed without specific feedback')
                             logger.info(f"Visual validation failed on attempt {attempt + 1}: {visual_feedback}")
+                            validate_session.save_session("validation_session.json")
                         else:
                             logger.info(f"Visual validation passed on attempt {attempt + 1}")
+                            validate_session.save_session("validation_session.json")
                             
                 except Exception as e:
                     logger.info(f"Visual validation error on attempt {attempt + 1}: {e}")

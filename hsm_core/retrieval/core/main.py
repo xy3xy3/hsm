@@ -2,10 +2,12 @@
 Main Retrieval Module
 """
 
+import asyncio
 import numpy as np
 from typing import List, Dict, Optional, TYPE_CHECKING
 from pathlib import Path
 
+from hsm_core.scene_motif.core.bounding_box import BoundingBox
 from hsm_core.scene_motif.core.obj import Obj
 from hsm_core.scene.core.objecttype import ObjectType
 from hsm_core.retrieval.model.model_manager import ModelManager
@@ -94,7 +96,10 @@ async def retrieve(
 
 
 if __name__ == "__main__":
-    from hsm_core.retrieval.data_utils import filter_hssd_categories
-    categories_main = filter_hssd_categories(ObjectType.WALL)
-    obj_description_example = ["lamp"]
-    logger.info(f"Example filtering for WALL objects: {categories_main[:5]}")
+    # test retrieval
+    obj = Obj(label="plant", description="a potted plant", bounding_box=BoundingBox(centroid=[0, 0, 0], half_size=[0.05, 0.05, 0.05], coord_axes=np.eye(3)))
+    results = asyncio.run(retrieve(
+        objs=[obj],
+        motif_description="a plant",
+    ))
+    print(obj.mesh_path)

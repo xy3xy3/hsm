@@ -27,7 +27,8 @@ from hsm_core.scene.processing.processing_helpers import (
     CEILING_Y_OFFSET
 )
 
-from hsm_core.vlm.gpt import Session, extract_json
+from hsm_core.vlm.vlm import create_session
+from hsm_core.vlm.gpt import extract_json, Session
 
 logger = get_logger('scene.processing.ceiling')
 from hsm_core.retrieval.model.model_manager import ModelManager
@@ -225,11 +226,11 @@ async def process_ceiling_objects(
 
     if "ceiling" not in cfg.mode.object_types:
         logger.info("Ceiling objects not in processing types, skipping")
-        dummy_session = Session(str(PROMPT_DIR / "scene_prompts_ceiling.yaml"))
+        dummy_session = create_session(str(PROMPT_DIR / "scene_prompts_ceiling.yaml"))
         dummy_session.output_dir = sessions_dir
         return dummy_session
     
-    ceiling_session = Session(str(PROMPT_DIR / "scene_prompts_ceiling.yaml"))
+    ceiling_session = create_session(str(PROMPT_DIR / "scene_prompts_ceiling.yaml"))
     ceiling_session.output_dir = sessions_dir
 
     MAX_CEILING_ITERATION = cfg.parameters.ceiling_object_generation.max_iterations

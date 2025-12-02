@@ -7,11 +7,13 @@ from pathlib import Path
 import traceback
 from omegaconf import DictConfig
 
-from hsm_core.vlm.gpt import Session, extract_json
+from hsm_core.vlm.vlm import create_session
+from hsm_core.vlm.gpt import extract_json, Session
 from hsm_core.retrieval.utils.transform_tracker import TransformInfo
 from hsm_core.scene.core.manager import Scene
 from hsm_core.scene.core.objects import SceneObject
 from hsm_core.scene.core.objecttype import ObjectType
+from hsm_core.scene.core.spec import ObjectSpec
 from hsm_core.scene.geometry.grid_utils import calculate_door_angle
 from hsm_core.scene.setup.scene_creation import create_scene_objects_from_motif
 from hsm_core.solvers.solver_dfs import run_solver
@@ -491,16 +493,16 @@ def prepare_wall_solver_inputs(
         
         # Assign the determined position (either direct VLM or converted)
         solver_obj["position"] = solver_pos # [pos_along_wall, height_from_floor]
-        solver_obj["rotation"] = 0 # Force rotation to 0 for DFS solver (wall objects face outward by default)
+        solver_obj["rotation"] = solver_rot # Use calculated rotation to face outward from wall
         solver_obj["wall_id"] = wall_id # Store wall_id for update step
         
-        # Add rotation constraint to ensure DFS solver keeps rotation at 0
+        # Add rotation constraint to ensure DFS solver keeps the calculated rotation
         if "constraints" not in solver_obj:
             solver_obj["constraints"] = []
         solver_obj["constraints"].append({
             "type": "global",
             "constraint": "rotation", 
-            "angle": 0.0
+            "angle": solver_rot
         })
         solver_objects.append(solver_obj)
 
@@ -700,13 +702,27 @@ def filter_motifs_needing_optimization(motifs: List[SceneMotif]) -> List[SceneMo
         if not getattr(motif, 'is_spatially_optimized', False)
     ]
 
+def _get_scene_objects_from_motif(motif: SceneMotif, scene_context: Dict[int, Tuple[SceneMotif, ObjectSpec]]):
+    """Return a list of SceneObjects belonging to motif."""
+    try:
+        objects = create_scene_objects_from_motif(motif, scene_context=scene_context)
+        # Only add objects to motif if it hasn't been spatially optimized yet
+        if not motif.is_spatially_optimized:
+            motif.add_objects(objects)
+        return objects
+    except Exception as exc:
+        logger.error(f"Error creating scene objects for motif '{motif.id}': {exc}")
+        logger.error(traceback.format_exc())
+        return []
+
 def run_spatial_optimization_for_stage(
     scene: Scene,
     cfg: DictConfig,
     current_stage_motifs: List[SceneMotif],
     object_type: ObjectType,
     output_dir: Path,
-    stage_name: str = ""
+    stage_name: str = "",
+    scene_context: Optional[Dict[int, Tuple[SceneMotif, ObjectSpec]]] = None
 ) -> None:
     """
     Run spatial optimization for motifs from a specific processing stage.
@@ -721,87 +737,63 @@ def run_spatial_optimization_for_stage(
     """
     if not current_stage_motifs:
         return
-    
-    def _get_scene_objects_from_motif(motif: SceneMotif):
-        """Return a list of SceneObjects belonging to motif."""
-        try:
-            objects = create_scene_objects_from_motif(motif)
-            motif.add_objects(objects)
-            return objects
-        except Exception as exc:
-            logger.error(f"Error creating scene objects for motif '{motif.id}': {exc}")
-            logger.error(traceback.format_exc())
-            return []
+
+    if scene_context is None:
+        scene_context = scene.build_scene_context()
 
     # Create scene objects from motifs
-    try:
-        current_stage_objects = []
+    current_stage_objects = []
+    for motif in current_stage_motifs:
+        scene_objects = _get_scene_objects_from_motif(motif, scene_context)
+        current_stage_objects.extend(scene_objects)
+
+    if not current_stage_objects:
+        logger.warning(f"No scene objects created for {object_type.name} {stage_name}, skipping optimization")
+        return
+    
+    if not cfg.mode.get('enable_spatial_optimization', True):
+        return
+    
+    from hsm_core.solvers.scene_spatial_optimizer import SceneSpatialOptimizer
+    from hsm_core.solvers.config import SceneSpatialOptimizerConfig
+
+    config = SceneSpatialOptimizerConfig()
+    config.use_motif_level_optimization = cfg.mode.get('use_motif_level_optimization', True)
+
+    # Build collision context using Scene class method
+    scene_context, context_objects = scene.build_collision_context(object_type, current_stage_motifs)
+    optimizer = SceneSpatialOptimizer(scene, config)
+    optimizer._initialize_room_geometry()
+    optimizer._load_object_meshes(current_stage_objects)
+    
+    # Clear collision cache at stage boundaries for fresh start
+    optimizer._collision_cache.clear()
+    optimizer._position_cache.clear()
+    
+    optimized_current_objects = _optimize_stage_objects_only(
+        optimizer, current_stage_objects, context_objects, current_stage_motifs,
+        config.use_motif_level_optimization, object_type, scene_context
+    )
+
+    if optimized_current_objects:
+        # Group optimized objects by motif
+        motif_to_objs: Dict[str, List[SceneObject]] = {}
+        for obj in optimized_current_objects:
+            motif_id = getattr(obj, 'motif_id', None)
+            if motif_id is None:
+                logger.warning(f"Optimized object missing motif_id, skipping: {obj}")
+                continue
+            if motif_id not in motif_to_objs:
+                motif_to_objs[motif_id] = []
+            motif_to_objs[motif_id].append(obj)
+
+        # Update motifs with optimized objects
         for motif in current_stage_motifs:
-            scene_objects = _get_scene_objects_from_motif(motif)
-            current_stage_objects.extend(scene_objects)
-
-        if not current_stage_objects:
-            logger.warning(f"No scene objects created for {object_type.name} {stage_name}, skipping optimization")
-            return
-
-    except Exception as e:
-        logger.error(f"Error during scene object creation for {object_type.name} {stage_name}: {e}")
-        logger.error("Continuing without scene object creation")
-        logger.error(traceback.format_exc())
-        return
-    
-    if not cfg.mode.get('enable_spatial_optimization', False):
-        return
-    
-    try:
-        from hsm_core.solvers.unified_optimizer import SceneSpatialOptimizer
-        from hsm_core.solvers.config import SceneSpatialOptimizerConfig
-
-        config = SceneSpatialOptimizerConfig()
-        config.debug_output = True
-        config.use_motif_level_optimization = cfg.mode.get('use_motif_level_optimization', True)
-
-        # Build context objects from motifs that are NOT in the current stage
-        # This ensures collision checking against previously placed objects
-        context_motifs = [m for m in scene.scene_motifs if m not in current_stage_motifs]
-        context_objects = []
-        for motif in context_motifs:
-            scene_objects = _get_scene_objects_from_motif(motif)
-            context_objects.extend(scene_objects)
-
-        optimizer = SceneSpatialOptimizer(scene, config)
-        optimizer._initialize_room_geometry()
-        optimizer._load_object_meshes(current_stage_objects)
-        
-        optimized_current_objects = _optimize_stage_objects_only(
-            optimizer, current_stage_objects, context_objects, current_stage_motifs,
-            config.use_motif_level_optimization, object_type
-        )
-
-        try:
-            if optimized_current_objects:
-                # Group optimized objects by motif
-                motif_to_objs: Dict[str, List[SceneObject]] = {}
-                for obj in optimized_current_objects:
-                    motif_id = getattr(obj, 'motif_id', None)
-                    if motif_id is None:
-                        continue
-                    if motif_id not in motif_to_objs:
-                        motif_to_objs[motif_id] = []
-                    motif_to_objs[motif_id].append(obj)
-
-                # Update motifs with optimized objects
-                for motif in current_stage_motifs:
-                    objs = motif_to_objs.get(motif.id)
-                    if not objs:
-                        continue
-                    motif.add_objects(objs)
-                    motif.is_spatially_optimized = True
-        except Exception:
-            pass
-        
-    except Exception as e:
-        pass
+            objs = motif_to_objs.get(motif.id)
+            if not objs:
+                continue
+            motif.add_objects(objs)
+            motif.is_spatially_optimized = True
 
 
 def _optimize_stage_objects_only(
@@ -810,51 +802,89 @@ def _optimize_stage_objects_only(
     context_objects: List,
     current_stage_motifs: List[SceneMotif],
     use_motif_optimization: bool,
-    object_type: ObjectType
+    object_type: ObjectType,
+    scene_context: Optional[Dict[int, Tuple[SceneMotif, ObjectSpec]]] = None,
 ) -> List:
     if not current_stage_objects:
         return []
     
-    if use_motif_optimization:
-        # Group current stage objects by motif for motif-level optimization
-        motif_groups = {}
-        for obj in current_stage_objects:
-            motif_id = getattr(obj, 'motif_id', 'unknown')
-            if motif_id not in motif_groups:
-                motif_groups[motif_id] = []
-            motif_groups[motif_id].append(obj)
+    if not use_motif_optimization:
+        raise NotImplementedError()
+
+    # Group current stage objects by motif for motif-level optimization
+    motif_groups = {}
+    for obj in current_stage_objects:
+        motif_id = getattr(obj, 'motif_id', 'unknown')
+        if motif_id not in motif_groups:
+            motif_groups[motif_id] = []
+        motif_groups[motif_id].append(obj)
+    
+    optimized_objects = []
+    for motif_id, motif_objects in motif_groups.items():
+        current_motif_id = getattr(motif_objects[0], 'motif_id', None) if motif_objects else None
         
-        optimized_objects = []
-        
-        # Optimize each motif as a unit against context + other current stage objects
-        for i, (motif_id, motif_objects) in enumerate(motif_groups.items()):
-            other_current_objects = [obj for obj in current_stage_objects if getattr(obj, 'motif_id', 'unknown') != motif_id]
-            full_context = context_objects + other_current_objects
+        # Build context for optimization
+        if object_type == ObjectType.SMALL and motif_objects:
+            parent_name = getattr(motif_objects[0], 'parent_name', None)
+            
+            if parent_name:
+                # For small objects, add motif representatives from other small motifs on same parent
+                # Start with previous stage objects (LARGE, WALL, CEILING)
+                full_context = [
+                    obj for obj in context_objects 
+                    if obj.obj_type != ObjectType.SMALL
+                ]
+                
+                # Add motif representatives from other small motifs on same parent
+                added_rep_motif_ids: set[str] = set()
+                for other_motif in current_stage_motifs:
+                    if other_motif.object_type != ObjectType.SMALL:
+                        continue
+                    if other_motif.id == current_motif_id:
+                        continue
+                    if other_motif.id in added_rep_motif_ids:
+                        continue
 
-            try:
-                optimized_motif = optimizer._optimize_motif_as_unit(motif_objects, full_context)
-                optimized_objects.extend(optimized_motif)
+                    # Get the motif's objects once
+                    other_motif_objects = _get_scene_objects_from_motif(other_motif, scene_context)
+                    if not other_motif_objects:
+                        continue
 
-                # Update the shared `current_stage_objects` list **in-place** so
-                # that subsequent motif optimisations (or individual object
-                # passes) operate on the newest world poses.  Without this,
-                # later optimisations may collide/support-check against stale
-                # coordinates and undo earlier fixes.
-                for orig, new in zip(motif_objects, optimized_motif):
-                    try:
-                        idx = current_stage_objects.index(orig)
-                        current_stage_objects[idx] = new  # overwrite with updated copy
-                    except ValueError:
-                        # Should not happen, but append as fail-safe
-                        current_stage_objects.append(new)
+                    # Only one representative per other motif if ANY object shares the same parent
+                    if any(getattr(o, 'parent_name', None) == parent_name for o in other_motif_objects):
+                        rep = optimizer.create_motif_representative(other_motif_objects)
+                        if rep:
+                            full_context.append(rep)
+                            added_rep_motif_ids.add(other_motif.id)
+                        else:
+                            logger.debug(f"Failed to create motif representative for {other_motif.id}")
+            else:
+                # No parent filtering, just exclude current motif
+                full_context = [
+                    obj for obj in context_objects 
+                    if getattr(obj, 'motif_id', None) != current_motif_id
+                ]
+        else:
+            # For non-small objects, just exclude current motif
+            if current_motif_id:
+                full_context = [
+                    obj for obj in context_objects 
+                    if getattr(obj, 'motif_id', None) != current_motif_id
+                ]
+            else:
+                full_context = context_objects
+                
+        optimized_motif = optimizer._optimize_motif_as_unit(motif_objects, full_context)
+        optimized_objects.extend(optimized_motif)
 
-            except Exception as e:
-                # Fallback to original objects if optimization fails
-                optimized_objects.extend(motif_objects)
-
+        # update in-place so later optimisations operate on the newest world poses
+        for orig, new in zip(motif_objects, optimized_motif):
+            idx = current_stage_objects.index(orig)
+            current_stage_objects[idx] = new  # overwrite with updated copy
+    
     return optimized_objects
 
-def run_spatial_optimization_for_all_types(
+def run_scene_spatial_optimization_for_all_types(
     scene: Scene,
     cfg: DictConfig,
     output_dir: Path | None = None,
@@ -866,22 +896,27 @@ def run_spatial_optimization_for_all_types(
         scene: The Scene object containing all motifs.
         cfg: The configuration object.
         output_dir: The output directory for saving optimization results.
-
-    This function iterates over all motif types, filters motifs that need optimization,
-    and runs spatial optimization for each type as needed.
     """
     from hsm_core.scene.processing.processing_helpers import run_spatial_optimization_for_stage, filter_motifs_needing_optimization
     from hsm_core.scene.core.objecttype import ObjectType
 
+    # Build scene context once for all object types
+    scene_context = scene.build_scene_context()
+
     all_motifs = scene.scene_motifs
     motif_types = [ObjectType.LARGE, ObjectType.WALL, ObjectType.CEILING, ObjectType.SMALL]
+    # motif_types = [ObjectType.SMALL]
 
     for obj_type in motif_types:
         type_motifs = [m for m in all_motifs if m.object_type == obj_type]
+        logger.debug(f"Processing {obj_type.name} motifs: {len(type_motifs)} found")
         if not type_motifs:
+            logger.debug(f"No {obj_type.name} motifs found, skipping")
             continue
         motifs_needing_optimization = filter_motifs_needing_optimization(type_motifs)
+        logger.debug(f"Motifs needing optimization for {obj_type.name}: {len(motifs_needing_optimization)}")
         if motifs_needing_optimization:
+            logger.debug(f"Running spatial optimization for {obj_type.name} with {len(motifs_needing_optimization)} motifs")
             try:
                 run_spatial_optimization_for_stage(
                     scene=scene,
@@ -889,7 +924,13 @@ def run_spatial_optimization_for_all_types(
                     current_stage_motifs=motifs_needing_optimization,
                     object_type=obj_type,
                     output_dir=output_dir,
-                    stage_name=f"export_only_{obj_type.name.lower()}"
+                    stage_name=f"export_only_{obj_type.name.lower()}",
+                    scene_context=scene_context
                 )
             except Exception as e:
+                logger.error(f"Error in spatial optimization for {obj_type.name}: {e}")
+                logger.error(f"Exception details: {traceback.format_exc()}")
                 pass
+        else:
+            logger.debug(f"No {obj_type.name} motifs need optimization, skipping")
+

@@ -28,7 +28,8 @@ from hsm_core.scene.core.objects import LayoutData
 from hsm_core.scene.core.objecttype import ObjectType
 from hsm_core.scene.utils.utils import CompactJSONEncoder
 
-from hsm_core.vlm.gpt import Session, extract_json
+from hsm_core.vlm.vlm import create_session
+from hsm_core.vlm.gpt import extract_json
 from hsm_core.vlm.utils import round_nested_values
 from hsm_core.config import HSSD_PATH, PROJECT_ROOT
 
@@ -286,7 +287,7 @@ def get_gpt_placement_suggestions(
     existing_objects, _ = motif.get_objects_by_names(large_object_names)
     valid_ids = [small_motif.id for small_motif in generated_small_motif] if generated_small_motif else []
 
-    small_obj_session = Session(PROMPTS_PATH)
+    small_obj_session = create_session(PROMPTS_PATH)
 
     if fallback:
         logger.warning("Fallback to use bbox height")
@@ -362,7 +363,8 @@ def prepare_layered_placement_prompt(
         Dictionary containing prompt data for GPT
     """
     large_objects_str = ", ".join(large_object_names)
-    existing_objects, _ = motif.get_objects_by_names(large_object_names)
+    all_motif_objects, _ = motif.get_objects_by_names()
+    facing_objects = [obj for obj in all_motif_objects if obj.name not in large_object_names]
     cleaned_layer_data = clean_layer_info(layer_data)
 
     # Add layer targeting information to the prompt
@@ -379,7 +381,7 @@ def prepare_layered_placement_prompt(
                 "size": f"{small_motif.extents[0]:.2f}m × {small_motif.extents[2]:.2f}m"
             } for small_motif in generated_small_motif
         ] if generated_small_motif else f"Suggest appropriate small objects for this context{layer_prompt}",
-        "PARENT_MOTIF_OBJECTS": round_nested_values(SceneObject.list_to_gpt_dict(existing_objects)),
+        "PARENT_MOTIF_OBJECTS": round_nested_values(SceneObject.list_to_gpt_dict(facing_objects)),
         "LAYER_INFO": round_nested_values(cleaned_layer_data)
     }
 
@@ -681,8 +683,17 @@ def optimize_small_objects(
                         facing_data["stored_facing"] = original_obj["stored_facing"]
                     if "stored_face_away" in original_obj:
                         facing_data["stored_face_away"] = original_obj["stored_face_away"]
+                    # Only preserve stored_rotation if there's no solver rotation result
+                    # The solver's rotation should take precedence
                     if "stored_rotation" in original_obj:
-                        facing_data["stored_rotation"] = original_obj["stored_rotation"]
+                        # Check if this object has a solver rotation result
+                        has_solver_rotation = False
+                        for solved_obj in solved_objects_on_surface:
+                            if solved_obj["id"] == obj_id and "rotation" in solved_obj:
+                                has_solver_rotation = True
+                                break
+                        if not has_solver_rotation:
+                            facing_data["stored_rotation"] = original_obj["stored_rotation"]
                     if facing_data:  # Only store if there's facing information
                         facing_lookup[obj_id] = facing_data
 
@@ -690,6 +701,9 @@ def optimize_small_objects(
                 for solved_obj in solved_objects_on_surface:
                     obj_id = solved_obj["id"]
                     if obj_id in facing_lookup:
+                        # Preserve solver's rotation result by updating stored_rotation
+                        if "rotation" in solved_obj:
+                            solved_obj["stored_rotation"] = solved_obj["rotation"]
                         solved_obj.update(facing_lookup[obj_id])
 
                 constrained_layout[large_obj_name][layer_key][surface_key] = solved_objects_on_surface
@@ -1030,20 +1044,25 @@ def update_small_motifs_from_constrained_layout(
                             target_obj = object_lookup[facing_target]
                         elif facing_target.lower() in object_lookup:
                             target_obj = object_lookup[facing_target.lower()]
-                        
-                        if target_obj and hasattr(target_obj, 'position'):
+
+                        # Check if object is trying to face its own parent surface
+                        if target_obj and target_obj == parent_obj:
+                            logger.debug(f"  - Object {small_id} is trying to face its parent '{facing_target}' - setting rotation to 0°")
+                            world_rotation = 0.0
+                        elif target_obj and hasattr(target_obj, 'position'):
                             target_pos = target_obj.position
                             # Calculate direction vector from small object to target
                             direction_x = target_pos[0] - world_pos[0]
                             direction_z = target_pos[2] - world_pos[2]
-                            
+
                             # Calculate angle in degrees (0 is positive z-axis, increases clockwise)
                             facing_angle = math.degrees(math.atan2(direction_x, direction_z))
                             # Use the facing angle directly since 0° already points in the correct direction
                             world_rotation = facing_angle % 360
                             logger.debug(f"  - Calculated facing angle to {facing_target}: {facing_angle}° (world rotation: {world_rotation}°)")
                         else:
-                            logger.warning(f"Could not find target object '{facing_target}' for facing rotation")
+                            logger.warning(f"Could not find target object '{facing_target}' for facing rotation - setting rotation to 0°")
+                            world_rotation = 0.0
                     
                     # Handle face_away target
                     elif face_away_target:
@@ -1053,20 +1072,25 @@ def update_small_motifs_from_constrained_layout(
                             target_obj = object_lookup[face_away_target]
                         elif face_away_target.lower() in object_lookup:
                             target_obj = object_lookup[face_away_target.lower()]
-                        
-                        if target_obj and hasattr(target_obj, 'position'):
+
+                        # Check if object is trying to face away from its own parent surface
+                        if target_obj and target_obj == parent_obj:
+                            logger.debug(f"  - Object {small_id} is trying to face away from its parent '{face_away_target}' - setting rotation to 0°")
+                            world_rotation = 0.0
+                        elif target_obj and hasattr(target_obj, 'position'):
                             target_pos = target_obj.position
                             # Calculate direction vector from small object to target
                             direction_x = target_pos[0] - world_pos[0]
                             direction_z = target_pos[2] - world_pos[2]
-                            
+
                             # Calculate angle pointing toward target, then add 180° to face away
                             toward_angle = math.degrees(math.atan2(direction_x, direction_z))
                             face_away_angle = (toward_angle + 180) % 360
                             world_rotation = face_away_angle
                             logger.debug(f"  - Calculated face_away angle from {face_away_target}: {face_away_angle}° (toward: {toward_angle}°)")
                         else:
-                            logger.warning(f"Could not find target object '{face_away_target}' for face_away rotation")
+                            logger.warning(f"Could not find target object '{face_away_target}' for face_away rotation - setting rotation to 0°")
+                            world_rotation = 0.0
                     
                     # Update the motif with computed world position and rotation.
                     small_motif.position = world_pos

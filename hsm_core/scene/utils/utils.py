@@ -468,7 +468,8 @@ def legacy_load_scene_state(
 
 def load_scene_state(
     filename: str = "scene_state.json",
-    object_types: Optional[list[ObjectType]] = None
+    object_types: Optional[list[ObjectType]] = None,
+    arrangement_pickle_dir: Optional[str] = None
 ) -> Tuple[
     str, List[SceneMotif], List[Tuple[float, float]], Tuple[float, float], str, Optional[SceneSpec], Optional[List[Tuple[float, float]]], str, Optional[dict], Optional[list], Optional[list]
 ]:
@@ -478,6 +479,8 @@ def load_scene_state(
     Args:
         filename: Path to scene state JSON file
         object_types: list of ObjectType to filter motifs
+        arrangement_pickle_dir: Optional directory to search for arrangement pickle files.
+                               If None, uses the default search logic in _load_arrangement.
     Returns:
         tuple containing:
             - room description (str)
@@ -492,7 +495,6 @@ def load_scene_state(
             - errors (list, optional)
             - warnings (list, optional)
     """
-    project_root = Path(clean_local_scratch_path(str(Path(__file__).parent.parent.resolve())))
     current_scene_dir = str(Path(filename).parent.resolve())
 
     if not os.path.exists(filename):
@@ -501,80 +503,18 @@ def load_scene_state(
     with open(filename, 'r') as f:
         scene_state = json.load(f)
 
-    # Handle errors/warnings if present
+    # Extract metadata
     errors = scene_state.get("errors", [])
     warnings = scene_state.get("warnings", [])
     metrics = scene_state.get("metrics", {})
 
     # New format: deduplicated with 'motifs', 'object_specs', 'scene_objects'
     if "motifs" in scene_state and "object_specs" in scene_state and "scene_objects" in scene_state:
-        # Reconstruct object specs and scene objects
-        object_specs_dict = scene_state["object_specs"]
-        scene_objects_dict = scene_state["scene_objects"]
-        # Build objects by ID
-        object_specs = {int(k): ObjectSpec(**v) for k, v in object_specs_dict.items()}
-        scene_objects = {k: SceneObject(**v) for k, v in scene_objects_dict.items()}
-        scene_motifs = []
-        for motif_data in scene_state["motifs"]:
-            # Resolve glb_file, arrangement_pickle, visualization to absolute
-            for key in ("glb_file", "arrangement_pickle", "visualization"):
-                if motif_data.get(key):
-                    try:
-                        # Clean up path by removing /local-scratch/ prefix if present
-                        cleaned_path = clean_local_scratch_path(motif_data[key], current_scene_dir)
-                        motif_data[key] = str(to_absolute_path(cleaned_path, current_scene_dir))
-                    except Exception as e:
-                        raise ValueError(f"Failed to resolve {key}: {motif_data.get(key)} ({e})")
-            # Reconstruct object_specs and scene_objects for this motif
-            motif_object_specs = [object_specs[oid] for oid in motif_data.get("object_spec_ids", []) if oid in object_specs]
-            motif_scene_objects = [scene_objects[oid] for oid in motif_data.get("scene_object_ids", []) if oid in scene_objects]
-            # Backward compatibility: if scene_objects list present, use it
-            if motif_data.get("scene_objects"):
-                motif_scene_objects = [SceneObject(**obj) for obj in motif_data["scene_objects"]]
-            # Load arrangement if arrangement_pickle is present
-            arrangement = None
-            arrangement_pickle_path = motif_data.get("arrangement_pickle")
-            if arrangement_pickle_path:
-                try:
-                    # Clean up path by removing /local-scratch/ prefix if present
-                    cleaned_path = clean_local_scratch_path(arrangement_pickle_path, current_scene_dir)
-                    arrangement_path = Path(cleaned_path)
-                    if arrangement_path.exists():
-                        arrangement = Arrangement.load_pickle(str(arrangement_path))
-                    else:
-                        logger.warning(f"Arrangement pickle does not exist: {cleaned_path}")
-                        arrangement_path = to_absolute_path(cleaned_path, current_scene_dir)
-                        if arrangement_path.exists():
-                            arrangement = Arrangement.load_pickle(str(arrangement_path))
-                        else:
-                            raise ValueError(f"Arrangement pickle does not exist: {arrangement_path}")
-                except Exception as e:
-                    raise ValueError(f"Warning: Failed to load arrangement for motif {motif_data.get('name', 'unknown')}: {e}")
-            else:
-                logger.info("Arrangement pickle not found, loading from GLB file")
-                glb_file_path = motif_data.get("glb_file")
-                motif_name = motif_data.get('name')
-                arrangement = _load_arrangement(glb_file_path, motif_name)
-                if arrangement is None:
-                    raise ValueError(f"No arrangement pickle file found for motif {motif_name}")
-            motif = SceneMotif(
-                id=motif_data["name"],
-                extents=tuple(motif_data["extents"]),
-                position=tuple(motif_data["position"]),
-                rotation=motif_data["rotation"],
-                description=motif_data["description"],
-                glb_path=motif_data.get("glb_file"),
-                scene_objects=motif_scene_objects,
-                arrangement=arrangement,
-                object_type=ObjectType(motif_data.get("object_type", "undefined")),
-                object_specs=motif_object_specs,
-                ignore_collision=motif_data.get("ignore_collision", False)
-            )
-            if object_types and motif.object_type not in object_types:
-                logger.info(f"Skipping motif {motif.id} because it is not in the list of object types to load: {object_types}")
-                continue
-            scene_motifs.append(motif)
-            room_details = scene_state.get("room_details", "Room vertices: " + str(scene_state["room_vertices"]) + " Door location: " + str(scene_state["door_location"]) + " Window locations: " + str(scene_state.get("window_location")))
+        scene_motifs = _load_new_format_motifs(
+            scene_state, current_scene_dir, object_types, arrangement_pickle_dir
+        )
+        room_details = _build_room_details(scene_state)
+        
         return (
             scene_state["room_desc"],
             scene_motifs,
@@ -591,8 +531,187 @@ def load_scene_state(
     # Legacy format: 'objects' list
     else:
         legacy_result = legacy_load_scene_state(filename, object_types)
-        # Pad with None for metrics/errors/warnings for compatibility
         return (*legacy_result, None, None, None)
+
+
+def _load_new_format_motifs(
+    scene_state: Dict[str, Any], 
+    current_scene_dir: str, 
+    object_types: Optional[list[ObjectType]], 
+    arrangement_pickle_dir: Optional[str]
+) -> List[SceneMotif]:
+    """Load motifs from new format scene state."""
+    # Reconstruct object specs and scene objects
+    object_specs_dict = scene_state["object_specs"]
+    scene_objects_dict = scene_state["scene_objects"]
+    
+    # Build objects by ID
+    object_specs = {int(k): ObjectSpec(**v) for k, v in object_specs_dict.items()}
+    scene_objects = {k: SceneObject(**v) for k, v in scene_objects_dict.items()}
+    
+    scene_motifs = []
+    for motif_data in scene_state["motifs"]:
+        # Resolve file paths
+        _resolve_motif_file_paths(motif_data, current_scene_dir)
+        
+        # Reconstruct object specs and scene objects for this motif
+        motif_object_specs = [object_specs[oid] for oid in motif_data.get("object_spec_ids", []) if oid in object_specs]
+        motif_scene_objects = [scene_objects[oid] for oid in motif_data.get("scene_object_ids", []) if oid in scene_objects]
+        
+        # Backward compatibility: if scene_objects list present, use it
+        if motif_data.get("scene_objects"):
+            motif_scene_objects = [SceneObject(**obj) for obj in motif_data["scene_objects"]]
+        
+        # Load arrangement
+        arrangement = _load_motif_arrangement(motif_data, arrangement_pickle_dir)
+        
+        # Create motif
+        motif = SceneMotif(
+            id=motif_data["name"],
+            extents=tuple(motif_data["extents"]),
+            position=tuple(motif_data["position"]),
+            rotation=motif_data["rotation"],
+            description=motif_data["description"],
+            glb_path=motif_data.get("glb_file"),
+            scene_objects=motif_scene_objects,
+            arrangement=arrangement,
+            object_type=ObjectType(motif_data.get("object_type", "undefined")),
+            object_specs=motif_object_specs,
+            ignore_collision=motif_data.get("ignore_collision", False)
+        )
+        
+        # Filter by object types if specified
+        if object_types and motif.object_type not in object_types:
+            logger.info(f"Skipping motif {motif.id} because it is not in the list of object types to load: {object_types}")
+            continue
+            
+        scene_motifs.append(motif)
+    
+    return scene_motifs
+
+
+def _resolve_motif_file_paths(motif_data: Dict[str, Any], current_scene_dir: str) -> None:
+    """Resolve file paths in motif data to absolute paths."""
+    for key in ("glb_file", "arrangement_pickle", "visualization"):
+        if motif_data.get(key):
+            try:
+                cleaned_path = clean_local_scratch_path(motif_data[key], current_scene_dir)
+                
+                # First try to resolve as absolute path
+                if os.path.isabs(cleaned_path) and os.path.exists(cleaned_path):
+                    motif_data[key] = cleaned_path
+                else:
+                    # Try relative to current scene directory
+                    try:
+                        motif_data[key] = str(to_absolute_path(cleaned_path, current_scene_dir))
+                    except ValueError:
+                        # If that fails, try to find the file by searching from the project root
+                        project_root = Path(__file__).parent.parent.parent.parent
+                        potential_path = project_root / cleaned_path.lstrip('/')
+                        if potential_path.exists():
+                            motif_data[key] = str(potential_path.resolve())
+                        else:
+                            # Last resort: use the cleaned path as-is
+                            motif_data[key] = cleaned_path
+                            
+            except Exception as e:
+                # If all else fails, use the original path
+                logger.warning(f"Could not resolve {key} path {motif_data[key]}: {e}. Using as-is.")
+                motif_data[key] = clean_local_scratch_path(motif_data[key], current_scene_dir)
+
+
+def _load_motif_arrangement(motif_data: Dict[str, Any], arrangement_pickle_dir: Optional[str]) -> Optional[Arrangement]:
+    """Load arrangement for a motif with optional custom directory."""
+    arrangement_pickle_path = motif_data.get("arrangement_pickle")
+    
+    if arrangement_pickle_path:
+        return _load_arrangement_from_path(arrangement_pickle_path, motif_data.get('name', 'unknown'))
+    else:
+        # Fallback to default search logic
+        glb_file_path = motif_data.get("glb_file")
+        motif_name = motif_data.get('name')
+        
+        if arrangement_pickle_dir:
+            return _load_arrangement_from_custom_dir(glb_file_path, motif_name, arrangement_pickle_dir)
+        else:
+            return _load_arrangement(glb_file_path, motif_name)
+
+
+def _load_arrangement_from_path(arrangement_pickle_path: str, motif_name: str) -> Optional[Arrangement]:
+    """Load arrangement from a specific path."""
+    try:
+        cleaned_path = clean_local_scratch_path(arrangement_pickle_path)
+        arrangement_path = Path(cleaned_path)
+        
+        if arrangement_path.exists():
+            return Arrangement.load_pickle(str(arrangement_path))
+        else:
+            logger.warning(f"Arrangement pickle does not exist: {cleaned_path}")
+            # Try with absolute path resolution
+            arrangement_path = to_absolute_path(cleaned_path, str(Path(arrangement_pickle_path).parent))
+            if arrangement_path.exists():
+                return Arrangement.load_pickle(str(arrangement_path))
+            else:
+                raise ValueError(f"Arrangement pickle does not exist: {arrangement_path}")
+    except Exception as e:
+        raise ValueError(f"Failed to load arrangement for motif {motif_name}: {e}")
+
+
+def _load_arrangement_from_custom_dir(glb_file_path: str, motif_name: str, arrangement_pickle_dir: str) -> Optional[Arrangement]:
+    """Load arrangement from a custom directory with fallback to default logic."""
+    if not arrangement_pickle_dir:
+        return _load_arrangement(glb_file_path, motif_name)
+    
+    # Try to find arrangement in custom directory
+    custom_dir = Path(arrangement_pickle_dir)
+    if not custom_dir.exists():
+        logger.warning(f"Custom arrangement directory does not exist: {arrangement_pickle_dir}")
+        return _load_arrangement(glb_file_path, motif_name)
+    
+    # Try different naming patterns in the custom directory
+    pickle_paths_to_try = [
+        custom_dir / f"{motif_name}.pkl",
+        custom_dir / f"{motif_name}_1.pkl"
+    ]
+    
+    # Try variations of the motif name
+    import re
+    base_name_match = re.match(r'^(.+)_(\d+)$', motif_name)
+    if base_name_match:
+        base_name = base_name_match.group(1)
+        current_suffix = int(base_name_match.group(2))
+        if current_suffix != 1:
+            pickle_paths_to_try.append(custom_dir / f"{base_name}_1.pkl")
+        pickle_paths_to_try.append(custom_dir / f"{base_name}.pkl")
+    
+    # Try each path until we find one that exists
+    for pickle_path in pickle_paths_to_try:
+        if pickle_path.exists():
+            try:
+                arrangement = Arrangement.load_pickle(str(pickle_path))
+                logger.info(f"Successfully loaded arrangement from custom dir: {pickle_path}")
+                return arrangement
+            except Exception as e:
+                logger.error(f"Failed to load arrangement from {pickle_path}: {e}")
+                continue
+    
+    # Fallback to default logic
+    logger.warning(f"No arrangement pickle found in custom directory {arrangement_pickle_dir}, falling back to default search")
+    return _load_arrangement(glb_file_path, motif_name)
+
+
+def _build_room_details(scene_state: Dict[str, Any]) -> str:
+    """Build room details string from scene state."""
+    room_vertices = scene_state["room_vertices"]
+    door_location = scene_state["door_location"]
+    window_location = scene_state.get("window_location")
+    
+    details = f"Room vertices: {room_vertices} Door location: {door_location}"
+    if window_location:
+        details += f" Window locations: {window_location}"
+    
+    return scene_state.get("room_details", details)
+
 
 def load_glb_and_get_extents(file_path: Path) -> Tuple[float, float, float]:
     """

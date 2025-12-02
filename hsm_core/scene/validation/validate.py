@@ -171,7 +171,7 @@ def validate_arrangement_smc(
     """
     layout_data, parse_result = _parse_json_response(response)
     if not parse_result[0]:
-        return parse_result[1], parse_result[2], 7 if "JSON" in parse_result[1] else 8
+        return False, parse_result[1], 7 if "JSON" in parse_result[1] else 8
 
     # Check for ID conflicts with existing motifs
     if existing_motifs_ids is not None:
@@ -314,7 +314,7 @@ def validate_layered_layout(response: str, layer_data: Dict[str, Any], large_obj
     """
     layout, parse_result = _parse_json_response(response)
     if not parse_result[0]:
-        return parse_result[1], parse_result[2], 1
+        return False, parse_result[1], 1
 
     used_ids = set()
 
@@ -420,7 +420,7 @@ def validate_floorplan(response: str) -> Tuple[bool, str, int]:
     """
     layout_data, parse_result = _parse_json_response(response)
     if not parse_result[0]:
-        return parse_result[1], parse_result[2], 6
+        return False, parse_result[1], 6
 
     if not all(key in layout_data for key in ["room_vertices", "door_location"]):
         return False, "Missing required keys: floorplan and door_location", 1
@@ -474,7 +474,7 @@ def validate_room_type(response: str) -> Tuple[bool, str, int]:
     """
     data, parse_result = _parse_json_response(response)
     if not parse_result[0]:
-        return parse_result[1], parse_result[2], 1
+        return False, parse_result[1], 1
 
     if "room_type" not in data:
         return False, "Missing 'room_type' key in response", 2
@@ -500,7 +500,7 @@ def validate_wall_position(response: str, valid_motif_ids: list) -> Tuple[bool, 
     """
     position_data, parse_result = _parse_json_response(response)
     if not parse_result[0]:
-        return parse_result[1], parse_result[2], 4
+        return False, parse_result[1], 4
 
     if "positions" not in position_data:
         return False, "Missing 'positions' key in the response.", 1
@@ -559,7 +559,7 @@ def validate_wall_objects(response: str, wall_object_ids: list, valid_wall_ids: 
     """
     objects_data, parse_result = _parse_json_response(response)
     if not parse_result[0]:
-        return parse_result[1], parse_result[2], 4
+        return False, parse_result[1], 4
 
     if "objects" not in objects_data:
         return False, "Missing 'objects' key in the response.", 1
@@ -833,4 +833,3 @@ def validate_small_object_response(
     except Exception as e:
         # Catch-all for unexpected errors during the main validation logic
         return False, f"Unexpected error during validation: {type(e).__name__} - {e} (Line: {e.__traceback__.tb_lineno if e.__traceback__ else 'N/A'})", 5
-

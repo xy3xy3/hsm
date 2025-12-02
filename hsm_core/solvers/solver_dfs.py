@@ -1,7 +1,5 @@
 import os
-import logging
-from pathlib import Path
-from typing import Dict, List, Tuple, Optional, Set, Union
+from typing import Dict, List, Tuple, Optional, Union
 from dataclasses import dataclass
 from enum import Enum
 import time
@@ -13,8 +11,11 @@ import numpy as np
 import matplotlib.pyplot as plt
 from shapely.geometry import Polygon, Point, LineString
 from rtree import index
+from shapely.geometry import polygon as shape_polygon
+
 from hsm_core.vlm.utils import round_nested_values
 from hsm_core.utils import get_logger
+from hsm_core.solvers.config import DFSSolverConfig
 
 logger = get_logger('solvers.dfs')
 
@@ -29,24 +30,6 @@ class MotifPlacement:
     rotation: float
     bbox: List[Tuple[float, float]]
     score: float = 0.0
-
-
-@dataclass
-class DFSSolverConfig:
-    """Configuration for the DFS solver."""
-    grid_size: float = 0.1
-    max_duration: float = 10.0
-    max_candidates_per_motif: int = 10
-    # wall_proximity_threshold: float = 0.1 # now use grid size
-    alignment_threshold: float = -0.7
-    epsilon: float = 1e-6
-    
-    # soft constraints
-    initial_placement_range: float = 5.0 # the distance (in meters) over which initial placement score decays
-    initial_placement_weight: float = 5.0 # weight for initial placement score
-    wall_alignment_weight: float = 2.5  # weight for wall alignment score
-    wall_alignment_range: float = 0.5   # the distance (in meters) over which wall score decays
-
 
 class ConstraintType(Enum):
     """Types of constraints that can be applied to motifs."""
@@ -103,7 +86,7 @@ class DFSSolver:
             List of solution dictionaries mapping motif names to placements
         """
         self.reset_state()
-        self.surface_poly = surface_poly
+        self.surface_poly = shape_polygon.orient(surface_poly, sign=1.0)
         self.motifs = motifs
         self.constraints = {motif[0]: motif[2] for motif in motifs if motif[2]}
         
@@ -212,15 +195,21 @@ class DFSSolver:
             if verbose:
                 logger.info(f"Timeout at depth {depth}")
             # Save partial solution if it's the best we have
-            if depth > 0 and not self.solutions:
+            if depth > 0 and not self.solutions and current_placement:
+                logger.info(f"Saving partial solution with {len(current_placement)} motifs due to timeout")
                 self.solutions.append(dict(current_placement))
             return
 
         # Base case: all motifs placed
         if not remaining_motifs:
-            if verbose:
-                logger.info(f"Found complete solution at depth {depth}")
-            self.solutions.append(dict(current_placement))
+            # Only save solution if we actually placed at least one motif
+            if current_placement:
+                if verbose:
+                    logger.info(f"Found complete solution at depth {depth} with {len(current_placement)} motifs")
+                self.solutions.append(dict(current_placement))
+            else:
+                if verbose:
+                    logger.debug(f"Reached base case with empty placement (all motifs skipped)")
             return
         
         # Get next motif to place

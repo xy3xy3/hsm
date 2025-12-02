@@ -15,8 +15,6 @@ from .utils.motif_visualize import visualize_scene_motif
 from .generation.decomposition import decompose_motif_async, decompose_motif_with_session
 from .generation import process_motif_with_visual_validation, build_arrangement_from_json
 from .spatial import optimize_sm
-from .spatial.spatial_optimizer import optimize
-from .spatial.hierarchical_optimizer import optimize_with_hierarchy
 from .programs import Program, execute
 from .utils.motif_visualize import generate_all_motif_views
 from .utils.mesh_utils import create_furniture_lookup, assign_mesh_to_object

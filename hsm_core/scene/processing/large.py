@@ -20,7 +20,8 @@ from hsm_core.config import PROMPT_DIR
 import logging
 logger = logging.getLogger(__name__)
 
-from hsm_core.vlm.gpt import Session, extract_json
+from hsm_core.vlm.vlm import create_session
+from hsm_core.vlm.gpt import extract_json, Session
 from hsm_core.retrieval.model.model_manager import ModelManager
 from hsm_core.scene.processing.processing_helpers import (
     prepare_large_solver_inputs,
@@ -33,7 +34,7 @@ from hsm_core.scene.io.export import save_scene
 
 def _create_floor_session(sessions_dir: str) -> Session:
     """Create a session for large object processing."""
-    session = Session(str(PROMPT_DIR / "scene_prompts_large.yaml"))
+    session = create_session(str(PROMPT_DIR / "scene_prompts_large.yaml"))
     session.output_dir = sessions_dir
     return session
 

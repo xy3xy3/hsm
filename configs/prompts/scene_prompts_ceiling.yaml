@@ -129,5 +129,7 @@ populate_room_provided: >-
 
 
 invalid_response: >-
-  <FEEDBACK>
-  Please revise your suggestion.
+  """<FEEDBACK>"""
+  
+  You MUST fix this error in your response. Do NOT repeat the same mistake.
+  Please provide a corrected response that addresses the error above.

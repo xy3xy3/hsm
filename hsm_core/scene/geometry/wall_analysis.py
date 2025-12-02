@@ -193,7 +193,7 @@ def extract_wall_data(room_polygon: Polygon, scene_motifs: list,
                 "length": wall_length,
                 "angle": wall_angle,
                 "blocked_areas": [],
-                "thickness": 0.01  # Add wall thickness (same as WALL_THICKNESS constant)
+                "thickness": WALL_THICKNESS
             })
 
     # Process door location if provided

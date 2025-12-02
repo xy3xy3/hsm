@@ -38,14 +38,14 @@ def validate_door_location(scene, door_location: tuple[float, float]) -> tuple[f
         return door.location
 
     # If initial validation fails, log warning and try to adjust to the closest wall
-    logger.warning(f"Initial door location {door_location} is invalid. Attempting to adjust to the closest wall.")
+    logger.debug(f"Initial door location {door_location} is invalid. Attempting to adjust to the closest wall.")
     if door.adjust_to_wall(scene.room_polygon):  # Pass None for existing_cutouts as this is the first door
         # adjust_to_wall internally calls validate again. If it returns True, the door.location is updated and valid.
         logger.info(f"Door successfully adjusted to a valid position on the closest wall: {door.location}")
         return door.location
     else:
         # If adjust_to_wall also fails, then proceed with the original fallback (longest wall midpoint)
-        logger.warning(f"Could not find valid door location for {door_location} even after trying to adjust to the closest wall. Falling back to longest wall midpoint.")
+        logger.info(f"Could not find valid door location for {door_location} even after trying to adjust to the closest wall. Falling back to longest wall midpoint.")
         # Fallback to center of longest wall
         longest_wall = None
         max_length = 0

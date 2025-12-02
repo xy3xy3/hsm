@@ -207,52 +207,6 @@ class Cutout:
         # Check if ranges overlap
         return not (self_end < other_start or self_start > other_end)
 
-    def get_available_space(self, existing_cutouts: List['Cutout']) -> float:
-        """
-        Calculate the maximum available space for this cutout on its wall,
-        considering other cutouts.
-
-        Args:
-            existing_cutouts: List of already placed cutouts
-
-        Returns:
-            float: Maximum available width in meters
-        """
-        # Get cutouts on the same wall
-        same_wall_cutouts = [c for c in existing_cutouts if c.closest_wall_index == self.closest_wall_index]
-
-        if not same_wall_cutouts:
-            # No other cutouts on this wall, use wall length minus corner margins
-            return self.wall_length - WALL_CORNER_MARGIN * 2  # Margin on each side
-
-        # Find the closest cutouts to the left and right
-        left_cutout = None
-        right_cutout = None
-        min_left_dist = float('inf')
-        min_right_dist = float('inf')
-
-        for cutout in same_wall_cutouts:
-            dist = cutout.projection_on_wall - self.projection_on_wall
-            if dist < 0 and abs(dist) < min_left_dist:  # Cutout is to the left
-                min_left_dist = abs(dist)
-                left_cutout = cutout
-            elif dist > 0 and dist < min_right_dist:  # Cutout is to the right
-                min_right_dist = dist
-                right_cutout = cutout
-
-        # Calculate available space
-        left_boundary = WALL_CORNER_MARGIN if not left_cutout else left_cutout.projection_on_wall + (left_cutout.width / 2) + 0.3
-        right_boundary = self.wall_length - WALL_CORNER_MARGIN if not right_cutout else right_cutout.projection_on_wall - (right_cutout.width / 2) - 0.3
-
-        # Ensure boundaries are valid
-        left_boundary = max(WALL_CORNER_MARGIN, left_boundary)
-        right_boundary = min(self.wall_length - WALL_CORNER_MARGIN, right_boundary)
-
-        # Calculate maximum width
-        max_width = right_boundary - left_boundary
-
-        return max(0, max_width)
-
     def adjust_to_wall(self, room_polygon: Polygon, existing_cutouts: List['Cutout'] = []) -> bool:
         """
         Adjust the cutout location to be properly positioned on the closest wall

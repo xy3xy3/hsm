@@ -44,9 +44,9 @@ def setup_logging(output_dir: Path) -> logging.Logger:
         Main logger instance
     """
     # Clear any existing handlers from root logger
-    # root_logger = logging.getLogger()
-    # for handler in root_logger.handlers[:]:
-    #     root_logger.removeHandler(handler)
+    root_logger = logging.getLogger()
+    for handler in root_logger.handlers[:]:
+        root_logger.removeHandler(handler)
 
     # # Also clear handlers from any existing hsm_core logger
     # hsm_logger = logging.getLogger('hsm_core')
@@ -79,7 +79,7 @@ def setup_logging(output_dir: Path) -> logging.Logger:
     logger.propagate = False
 
     # Configure root logger to allow hsm_core loggers to work with getLogger(__name__)
-    # root_logger.setLevel(logging.WARNING)
+    root_logger.setLevel(logging.WARNING)
 
     # # Configure retrieval logger
     # retrieval_logger = logging.getLogger('hsm_core.retrieval')

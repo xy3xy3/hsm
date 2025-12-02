@@ -6,7 +6,7 @@ Constants for HSM.
 FLOOR_HEIGHT: float = 0.0
 OBJ_Y_OFFSET: float = 0.1
 WALL_HEIGHT: float = 2.5
-WALL_THICKNESS: float = 0.01
+WALL_THICKNESS: float = 0.001
 DOOR_HEIGHT: float = 2.0
 DOOR_WIDTH: float = 0.9
 
@@ -48,6 +48,13 @@ VIS_GRID_MARKER_INTERVAL_Y = 1.0
 VIS_SURFACE_TEXT_SIZE = 8
 VIS_SURFACE_DIRECTION_TEXT_SIZE = 8
 VIS_SURFACE_COORD_TEXT_SIZE = 7
+
+# Z-order constants for layering
+ZORDER_GRID = 0
+ZORDER_BASE = 1
+ZORDER_OBJECTS = 2
+ZORDER_MARKERS = 3
+ZORDER_TEXT = 4  # Highest - above markers
 
 # Object IDs and labels
 ID_DOOR = "door"

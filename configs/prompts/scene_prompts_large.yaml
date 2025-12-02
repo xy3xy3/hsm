@@ -66,12 +66,18 @@ populate_surface_motifs: >-
     4. Required clearance space in meters
 
   Motif guidelines:
-    - Only reference the large objects provided in the list
-    - Only group multiple large objects into a single motif if explicitly mentioned in the description
-    - Group large objects that have tight spatial relationships into a single motif, rugs are always a single motif
-    - Never split spatially related large objects into separate motifs (e.g. table and chairs, bed and nightstands)
-    - Each large object can only be used once in each motif
-
+    - Only reference large objects from the provided list
+    - Each large object can appear in at most one motif across the entire response
+    - A motif should contain as few objects as possible while still capturing tight spatial/functional relationships
+    - Only group objects that are functionally coupled and spatially adjacent (e.g., table with surrounding chairs, bed with flanking nightstands)
+    - Rugs are always a standalone single-object motif
+    
+  Examples:
+    - Sofa + coffee table → single motif (functionally coupled, spatially tight)
+    - TV stand → single motif (standalone)
+    - Bed + nightstand(s) → single motif (functionally coupled)
+    - Dresser → single motif (standalone)
+    
   Respond with JSON with the following format:
   ```json
   {
@@ -319,5 +325,7 @@ populate_room_provided: >-
   ```
 
 invalid_response: >-
-  <FEEDBACK>
-  Please revise your suggestion.
+  """<FEEDBACK>"""
+  
+  You MUST fix this error in your response. Do NOT repeat the same mistake.
+  Please provide a corrected response that addresses the error above.

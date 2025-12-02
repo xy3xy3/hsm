@@ -180,3 +180,8 @@ pyrightconfig.json
 
 # macOS
 .DS_Store
+
+# Result and data folders
+results/
+data/
+data

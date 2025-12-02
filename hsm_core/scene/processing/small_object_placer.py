@@ -13,7 +13,8 @@ from typing import Optional
 from omegaconf import DictConfig
 import matplotlib.pyplot as plt
 
-from hsm_core.vlm.gpt import Session, extract_json
+from hsm_core.vlm.vlm import create_session
+from hsm_core.vlm.gpt import extract_json
 from hsm_core.config import PROMPT_DIR
 from hsm_core.scene.validation.validate import validate_small_object_response, validate_arrangement_smc
 from hsm_core.scene.processing.small_object_helpers import (
@@ -232,7 +233,7 @@ async def process_single_motif_constrained_small_objects(
     layer_data: dict, output_dir: str, cfg, model, all_object_specs: dict, vis_output_dir: Path
 ) -> None:
     """Process constrained small objects for a single motif."""
-    small_obj_session = Session(str(PROMPT_DIR / "scene_prompts_small.yaml"))
+    small_obj_session = create_session(str(PROMPT_DIR / "scene_prompts_small.yaml"))
 
     # Prepare layer_data for VLM using clean_layer_info
     layer_data_for_llm = clean_layer_info(layer_data)
@@ -306,11 +307,11 @@ async def process_single_motif_constrained_small_objects(
 
     # Add height limits from layer data
     for arrangement in analysis_data["arrangements"]:
-        if "furniture" in arrangement["composition"]:
+        if "furniture" in arrangement["composition"] and arrangement["composition"]["furniture"]:
             obj_ids = [item["id"] for item in arrangement["composition"]["furniture"]]
             arrangement_objs = [obj for obj in relevant_small_specs if obj.id in obj_ids]
 
-            if arrangement_objs:
+            if arrangement_objs and len(arrangement_objs) > 0:
                 parent_id = arrangement_objs[0].parent_object
                 layer_key = arrangement_objs[0].placement_layer
 
@@ -403,6 +404,7 @@ async def process_unconstrained_small_objects(
     # Track cumulative occupancy across all surfaces and iterations
     cumulative_occupancy = 0.0
     total_surfaces_processed = 0
+    occupancy_ratio = 0.0
 
     logger.info(f"Starting unconstrained small object iterations (max: {max_iterations}, target saturation: {target_saturation * 100:.1f}%)")
 
@@ -607,7 +609,7 @@ async def process_unconstrained_small_objects_iteration(
 
             layer_data = remapped_layer_data
 
-        small_obj_session = Session(str(PROMPT_DIR / "scene_prompts_small.yaml"))
+        small_obj_session = create_session(str(PROMPT_DIR / "scene_prompts_small.yaml"))
 
         # Collect information about existing objects on each parent
         existing_objects_info = collect_existing_objects_info(scene, motif, current_motif_parent_name_to_id_map)
@@ -709,12 +711,12 @@ async def process_unconstrained_small_objects_iteration(
         # Add a height limit to the analysis for each arrangement from the layer_data
         for arrangement in analysis_data["arrangements"]:
             # Extract parent object and layer information from the objects in this arrangement
-            if "furniture" in arrangement["composition"]:
+            if "furniture" in arrangement["composition"] and arrangement["composition"]["furniture"]:
                 obj_ids = [item["id"] for item in arrangement["composition"]["furniture"]]
                 # Find the corresponding objects
                 arrangement_objs = [obj for obj in relevant_small_specs if obj.id in obj_ids]
 
-                if arrangement_objs:
+                if arrangement_objs and len(arrangement_objs) > 0:
                     # Get parent and layer info from the first object (assuming all have same parent/layer)
                     parent_id = arrangement_objs[0].parent_object
                     layer_key = arrangement_objs[0].placement_layer

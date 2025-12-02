@@ -8,6 +8,7 @@ from omegaconf import DictConfig
 from hsm_core.scene.core.manager import Scene
 from hsm_core.config import PROMPT_DIR, PROJECT_ROOT
 from hsm_core.retrieval.model.model_manager import ModelManager
+from hsm_core.vlm.vlm import create_session
 from hsm_core.vlm.gpt import Session
 from hsm_core.utils import get_logger
 
@@ -38,8 +39,7 @@ async def process_small_objects(
 
     if "small" not in cfg.mode.object_types:
         logger.info("Small objects not in processing types, skipping...")
-        dummy_session = Session(str(PROMPT_DIR / "scene_prompts_small.yaml"))
-        dummy_session.output_dir = str(sessions_dir)
+        dummy_session = create_session(str(PROMPT_DIR / "scene_prompts_small.yaml"), output_dir=str(sessions_dir))
         return dummy_session
 
     try:
@@ -47,8 +47,7 @@ async def process_small_objects(
 
         if small_session is None:
             # Create a session for consistency with other object types
-            small_session = Session(str(PROMPT_DIR / "scene_prompts_small.yaml"))
-            small_session.output_dir = str(sessions_dir)
+            small_session = create_session(str(PROMPT_DIR / "scene_prompts_small.yaml"), output_dir=str(sessions_dir))
 
         logger.info("Small object processing completed")
         return small_session
@@ -58,6 +57,5 @@ async def process_small_objects(
         import traceback
         traceback.print_exc()
         
-        dummy_session = Session(str(PROMPT_DIR / "scene_prompts_small.yaml"))
-        dummy_session.output_dir = str(sessions_dir)
+        dummy_session = create_session(str(PROMPT_DIR / "scene_prompts_small.yaml"), output_dir=str(sessions_dir))
         return dummy_session

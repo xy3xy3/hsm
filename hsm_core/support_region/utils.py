@@ -152,7 +152,7 @@ def simplify_vertices_outer(
 
             return shell, holes
         except Exception as e:
-            logger.warning(
+            logger.debug(
                 f"Shapely union failed while extracting holes ({e}); falling back to outline-only path.")
 
     # early return for degenerate inputs
@@ -215,7 +215,7 @@ def simplify_vertices_outer(
     while (len(edge_indices) <= 1 or edge_indices[0] != edge_indices[-1]) and iteration_count < max_iterations:
         # Check timeout periodically
         if iteration_count % 100 == 0 and time.time() - start_time > timeout_seconds:
-            logger.warning("Timeout in edge tracing loop: falling back to convex hull")
+            logger.debug("Timeout in edge tracing loop: falling back to convex hull")
             hull_polygon = Polygon(vertices_2d).convex_hull
             if isinstance(hull_polygon, Polygon):
                 return np.array(hull_polygon.exterior.coords)[:-1]
@@ -233,14 +233,14 @@ def simplify_vertices_outer(
             candidates = [v for v in new_vertices if v != prev_vertex]
             if not candidates:
                 # If no valid candidates, we might be stuck
-                logger.warning("No valid candidates in edge tracing: falling back to convex hull")
+                logger.debug("No valid candidates in edge tracing: falling back to convex hull")
                 break
             next_vertex = candidates[0]
         
         # Check for cycle detection (visiting same edge twice)
         edge_key = tuple(sorted([current_vertex, next_vertex]))
         if edge_key in visited_edges:
-            logger.warning("Cycle detected in edge tracing: falling back to convex hull")
+            logger.debug("Cycle detected in edge tracing: falling back to convex hull")
             break
         visited_edges.add(edge_key)
         
@@ -256,7 +256,7 @@ def simplify_vertices_outer(
         if traced_shape.is_valid:
             return final_vertices
         else:
-            logger.warning(f"traced_shape is invalid: {traced_shape}")
+            logger.debug(f"traced_shape is invalid: {traced_shape}")
             repaired_shape = traced_shape.buffer(0)
             if repaired_shape.is_valid:
                 logger.info("Successfully repaired invalid polygon using .buffer(0)")
@@ -267,7 +267,7 @@ def simplify_vertices_outer(
                      return np.array(repaired_shape.exterior.coords)[:-1]
 
     # Fallback to convex hull if edge tracing failed
-    logger.warning("Edge tracing failed or timed out, using convex hull fallback")
+    logger.info("Edge tracing failed or timed out, using convex hull fallback")
     hull_polygon = Polygon(vertices_2d).convex_hull
     if isinstance(hull_polygon, Polygon):
         return np.array(hull_polygon.exterior.coords)[:-1]

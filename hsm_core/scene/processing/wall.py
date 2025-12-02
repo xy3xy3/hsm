@@ -36,6 +36,7 @@ from hsm_core.scene.processing.processing_helpers import (
 )
 from hsm_core.scene.ablation import create_individual_scene_motifs_with_analysis
 
+from hsm_core.vlm.vlm import create_session
 from hsm_core.vlm.gpt import Session
 from hsm_core.vlm.utils import round_nested_values
 from hsm_core.retrieval.model.model_manager import ModelManager
@@ -259,6 +260,10 @@ async def _process_assigned_wall_objects(
             object_type=ObjectType.WALL,
         )
         valid_wall_motifs = [m for m in wall_motifs_processed if m.object_specs and getattr(m.object_specs[0], 'wall_id', None) == wall_id]
+        
+        # Set wall_alignment_id on motifs for proper wall attachment
+        for motif in valid_wall_motifs:
+            motif.wall_alignment_id = wall_id
 
         if not valid_wall_motifs:
             logger.info(f"No valid motifs created for wall {wall_id} in stage {stage_suffix}")
@@ -514,7 +519,7 @@ async def process_wall_objects(
 
     if "wall" not in cfg.mode.object_types:
         logger.info("Wall objects not in processing types, skipping")
-        wall_session = Session(PROMPT_DIR / "scene_prompts_wall.yaml", output_dir=str(sessions_dir))
+        wall_session = create_session(PROMPT_DIR / "scene_prompts_wall.yaml", output_dir=str(sessions_dir))
         return wall_session
     
     # Calculate room bounds from room polygon for accurate wall object positioning
@@ -527,7 +532,7 @@ async def process_wall_objects(
         except Exception as e:
             logger.warning(f"Could not extract room bounds from polygon: {e}")
     
-    wall_session = Session(PROMPT_DIR / "scene_prompts_wall.yaml", output_dir=str(sessions_dir))
+    wall_session = create_session(PROMPT_DIR / "scene_prompts_wall.yaml", output_dir=str(sessions_dir))
     processed_wall_motifs_all_stages: List[SceneMotif] = [] # Combined list for all wall objects
     threshold_percent = cfg.parameters.wall_object_generation.target_occupancy_percent
     MAX_WALL_ITERATION = cfg.parameters.wall_object_generation.max_iterations

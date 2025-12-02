@@ -1,11 +1,12 @@
 from __future__ import annotations
 from hsm_core.scene.core.objects import SceneObject
 from pathlib import Path
-from typing import Union, Optional, TYPE_CHECKING, Dict
+from typing import Union, Optional, TYPE_CHECKING, Dict, List, Tuple
 import trimesh
 
 if TYPE_CHECKING:
     from hsm_core.scene.core.objects import SceneObject
+    from hsm_core.scene.core.spec import ObjectSpec
 from hsm_core.scene.geometry.room_geometry import create_custom_room
 from hsm_core.scene.validation.placement import validate_door_location, validate_window_location
 from hsm_core.scene.utils.utils import load_scene_state
@@ -268,3 +269,124 @@ class Scene:
                 self._scene_motifs.append(motif)
         # Invalidate scene cache since motifs have been replaced
         self._invalidate_scene_cache()
+
+    def build_scene_context(self) -> Dict[int, Tuple['SceneMotif', 'ObjectSpec']]:
+        """
+        Build scene context mapping object_spec IDs to (motif, obj_spec) tuples.
+        
+        Returns:
+            Dictionary mapping integer object_spec IDs to (motif, obj_spec) tuples
+        """
+        from hsm_core.utils import get_logger
+        logger = get_logger('scene.core.manager')
+        
+        scene_context: Dict[int, Tuple[SceneMotif, 'ObjectSpec']] = {}
+        all_motifs_for_context = []
+        
+        # Collect all motifs including child motifs from scene objects
+        for m in self.scene_motifs:
+            all_motifs_for_context.append(m)
+            for obj in m.objects:
+                if obj.child_motifs:
+                    all_motifs_for_context.extend(obj.child_motifs)
+
+        # Build the context mapping
+        for motif in all_motifs_for_context:
+            if hasattr(motif, 'object_specs') and motif.object_specs:
+                for obj_spec in motif.object_specs:
+                    if hasattr(obj_spec, 'id') and obj_spec.id is not None:
+                        try:
+                            scene_context[int(obj_spec.id)] = (motif, obj_spec)
+                        except (ValueError, TypeError):
+                            logger.warning(f"Skipping object spec with non-integer ID {obj_spec.id} in motif {motif.id}")
+        
+        logger.debug(f"Built scene context with {len(scene_context)} object specs for parent lookups")
+        return scene_context
+
+    def build_collision_context(
+        self,
+        object_type: 'ObjectType',
+        current_stage_motifs: List[SceneMotif]
+    ) -> Tuple[Dict[int, Tuple[SceneMotif, 'ObjectSpec']], List[SceneObject]]:
+        """
+        Build collision context for spatial optimization.
+        
+        Args:
+            object_type: Type of objects being processed
+            current_stage_motifs: List of motifs from the current processing stage
+            
+        Returns:
+            Tuple of (scene_context dict, context_objects list)
+        """
+        from hsm_core.utils import get_logger
+        from hsm_core.scene.setup.scene_creation import create_scene_objects_from_motif
+        
+        logger = get_logger('scene.core.manager')
+        scene_context = self.build_scene_context()
+        
+        # Define collision hierarchy - each object type checks against these types
+        collision_hierarchy = {
+            ObjectType.LARGE: [ObjectType.LARGE],
+            ObjectType.WALL: [ObjectType.LARGE, ObjectType.WALL],
+            ObjectType.CEILING: [ObjectType.LARGE, ObjectType.WALL, ObjectType.CEILING],
+            ObjectType.SMALL: [ObjectType.LARGE, ObjectType.WALL, ObjectType.CEILING, ObjectType.SMALL]
+        }
+
+        # Build context objects from motifs that are NOT in the current stage
+        context_motifs = [m for m in self.scene_motifs if m not in current_stage_motifs]
+        context_objects = []
+        for motif in context_motifs:
+            if motif.object_type in collision_hierarchy[object_type]:
+                try:
+                    scene_objects = create_scene_objects_from_motif(motif, scene_context=scene_context)
+                    context_objects.extend(scene_objects)
+                except Exception as exc:
+                    logger.error(f"Error creating scene objects for context motif '{motif.id}': {exc}")
+                    continue
+
+        # For all object types, include other objects from the current stage for same-type collision checking
+        if object_type in [ObjectType.LARGE, ObjectType.WALL, ObjectType.CEILING, ObjectType.SMALL]:
+            for motif in current_stage_motifs:
+                if motif.object_type == object_type:
+                    scene_objects = create_scene_objects_from_motif(motif, scene_context=scene_context)
+                    context_objects.extend(scene_objects)
+
+        logger.debug(f"Final context for {object_type.name}: {len(context_objects)} objects")
+        return scene_context, context_objects
+
+    @staticmethod
+    def build_scene_context_from_motifs(motifs: List[SceneMotif]) -> Dict[int, Tuple[SceneMotif, 'ObjectSpec']]:
+        """
+        Build scene context from a list of motifs (static method for use outside Scene instances).
+        
+        Args:
+            motifs: List of motifs to build context from
+            
+        Returns:
+            Dictionary mapping integer object_spec IDs to (motif, obj_spec) tuples
+        """
+        from hsm_core.utils import get_logger
+        logger = get_logger('scene.core.manager')
+        
+        scene_context: Dict[int, Tuple[SceneMotif, 'ObjectSpec']] = {}
+        all_motifs_for_context = []
+        
+        # Collect all motifs including child motifs from scene objects
+        for m in motifs:
+            all_motifs_for_context.append(m)
+            for obj in m.objects:
+                if obj.child_motifs:
+                    all_motifs_for_context.extend(obj.child_motifs)
+
+        # Build the context mapping
+        for motif in all_motifs_for_context:
+            if hasattr(motif, 'object_specs') and motif.object_specs:
+                for obj_spec in motif.object_specs:
+                    if hasattr(obj_spec, 'id') and obj_spec.id is not None:
+                        try:
+                            scene_context[int(obj_spec.id)] = (motif, obj_spec)
+                        except (ValueError, TypeError):
+                            logger.warning(f"Skipping object spec with non-integer ID {obj_spec.id} in motif {motif.id}")
+        
+        logger.debug(f"Built scene context with {len(scene_context)} object specs for parent lookups")
+        return scene_context

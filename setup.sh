@@ -1,10 +1,12 @@
 #!/bin/bash
 # HSM Setup Script
-# This script sets up the HSM environment with mamba or conda
+# This script sets up the HSM environment with conda, git, and git-lfs.
 #
 # Usage:
 #   ./setup.sh                    # Run
-#   ./setup.sh --force           # Force recreation of environment
+#   ./setup.sh --help             # Show help message
+#   ./setup.sh --force            # Force recreation of environment
+#   ./setup.sh --verify           # Verify setup only
 
 set -e  # Exit on any error
 
@@ -62,6 +64,182 @@ next_step() {
 # Check if command exists
 command_exists() {
     command -v "$1" >/dev/null 2>&1
+}
+
+# Helper function to ensure we're back in project root
+ensure_project_root() {
+    # Change to the directory where setup.sh is located
+    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    cd "$SCRIPT_DIR"
+}
+
+# delete function with confirmation
+safe_remove() {
+    local target="$1"
+    local force="${2:-false}"
+    
+    # Interactive mode - always prompt
+    if [ -d "$target" ]; then
+        log_warning "About to remove directory: $target"
+        read -p "Continue? (y/N): " -n 1 -r
+        echo
+        if [[ $REPLY =~ ^[Yy]$ ]]; then
+            rm -rf "$target"
+            log_info "Directory removed: $target"
+        else
+            log_info "Operation cancelled"
+            return 1
+        fi
+    elif [ -f "$target" ]; then
+        log_warning "About to remove file: $target"
+        read -p "Continue? (y/N): " -n 1 -r
+        echo
+        if [[ $REPLY =~ ^[Yy]$ ]]; then
+            rm "$target"
+            log_info "File removed: $target"
+        else
+            log_info "Operation cancelled"
+            return 1
+        fi
+    fi
+}
+
+# Download from Hugging Face using git with optional sparse checkout
+download_from_hf_git() {
+    local repo_name="$1"
+    local target_dir="$2"
+    local include_patterns=("${@:3:$#-2}")  # All args except last two
+    local exclude_patterns=("${@:$(($#-1)):1}")  # Second to last arg
+    local use_full_clone="${@: -1}"  # Last arg
+    
+    log_info "Downloading $repo_name from Hugging Face..."
+    
+    # Check if target already exists (has .git directory)
+    if [ -d "$target_dir/.git" ]; then
+        log_success "$target_dir repository already cloned \n"
+        return 0
+    fi
+    
+    # Check if git-lfs is available
+    if ! command_exists git-lfs; then
+        log_warning "git-lfs not found. Installing..."
+        if ! git lfs install; then
+            log_error "Failed to install git-lfs"
+            return 1
+        fi
+    fi
+    
+    # Handle HF token authentication
+    if [ -f ".env" ] && grep -q "HF_TOKEN=" .env; then
+        HF_TOKEN=$(grep "HF_TOKEN=" .env | cut -d'=' -f2 | sed 's/^"//' | sed 's/"$//')
+        if [ -n "$HF_TOKEN" ] && [ "$HF_TOKEN" != "your_huggingface_token_here" ]; then
+            log_info "Using Hugging Face token from .env file"
+            if ! hf auth login --token "$HF_TOKEN"; then
+                log_error "Failed to login with HF token"
+                return 1
+            fi
+        else
+            log_warning "HF_TOKEN not set in .env file, using interactive login"
+            if ! hf auth login; then
+                log_error "Failed to login interactively"
+                return 1
+            fi
+        fi
+    else
+        log_warning ".env file not found or HF_TOKEN not set, using interactive login"
+        if ! hf auth login; then
+            log_error "Failed to login interactively"
+            return 1
+        fi
+    fi
+    
+    # Try different clone methods with fallback
+    if [ "$use_full_clone" = "true" ]; then
+        # Full clone - try SSH first, then HTTPS, then hf download
+        if ! git clone git@hf.co:datasets/$repo_name "$target_dir"; then
+            log_warning "SSH clone failed, trying HTTPS..."
+            if ! git clone https://huggingface.co/datasets/$repo_name "$target_dir"; then
+                log_warning "HTTPS clone failed, trying 'hf download'..."
+                if ! hf download "$repo_name" --repo-type=dataset --local-dir "$target_dir"; then
+                    log_error "Failed to obtain $repo_name via git and hf download"
+                    return 1
+                fi
+            fi
+        fi
+    else
+        # Selective download using sparse checkout
+        if [ ${#include_patterns[@]} -gt 0 ] && [ "${include_patterns[0]}" != "" ]; then
+            # Initialize repository for sparse checkout
+            mkdir -p "$target_dir"
+            cd "$target_dir"
+            
+            git init
+            git remote add origin "https://huggingface.co/datasets/$repo_name"
+            
+            # Enable sparse checkout
+            git sparse-checkout init --cone
+            
+            # Set include patterns
+            for pattern in "${include_patterns[@]}"; do
+                if [ "$pattern" != "" ]; then
+                    git sparse-checkout add "$pattern"
+                fi
+            done
+            
+            # Set exclude patterns if provided
+            if [ ${#exclude_patterns[@]} -gt 0 ] && [ "${exclude_patterns[0]}" != "" ]; then
+                for pattern in "${exclude_patterns[@]}"; do
+                    if [ "$pattern" != "" ]; then
+                        git sparse-checkout add "!$pattern"
+                    fi
+                done
+            fi
+            
+            # Fetch and checkout
+            if ! git fetch origin; then
+                log_warning "Git fetch failed, trying 'hf download' with patterns..."
+                cd ..
+                safe_remove "$target_dir" "true"
+                
+                # Build hf download command with include/exclude patterns
+                local hf_cmd="hf download $repo_name --repo-type=dataset --local-dir $target_dir"
+                for pattern in "${include_patterns[@]}"; do
+                    if [ "$pattern" != "" ]; then
+                        hf_cmd="$hf_cmd --include $pattern"
+                    fi
+                done
+                for pattern in "${exclude_patterns[@]}"; do
+                    if [ "$pattern" != "" ]; then
+                        hf_cmd="$hf_cmd --exclude $pattern"
+                    fi
+                done
+                
+                if ! eval "$hf_cmd"; then
+                    log_error "Failed to download $repo_name with selective patterns"
+                    return 1
+                fi
+            else
+                if ! git checkout main; then
+                    log_warning "Git checkout failed, trying master branch..."
+                    if ! git checkout master; then
+                        log_error "Failed to checkout any branch"
+                        cd ..
+                        return 1
+                    fi
+                fi
+                cd ..
+            fi
+        else
+            # No patterns specified, use hf download
+            if ! hf download "$repo_name" --repo-type=dataset --local-dir "$target_dir"; then
+                log_error "Failed to download $repo_name"
+                return 1
+            fi
+        fi
+    fi
+    
+    log_success "$repo_name downloaded successfully \n"
+    return 0
 }
 
 # Validate .env file configuration
@@ -131,10 +309,8 @@ check_requirements() {
         log_error "Missing required tools: ${missing_tools[*]}"
         log_error "Please install them and run this script again."
         log_info "On Ubuntu/Debian: sudo apt-get install curl git unzip"
-        log_info "For mamba (recommended - faster than conda):"
-        log_info "  1. Install conda/miniconda first: https://docs.conda.io/projects/miniconda/"
-        log_info "  2. Install mamba: conda install mamba -n base -c conda-forge"
-        log_info "For conda (alternative): https://docs.conda.io/projects/conda/en/latest/user-guide/install/"
+        log_info "For mamba (recommended - faster than conda): https://github.com/mamba-org/mamba"
+        log_info "For miniconda: https://docs.conda.io/projects/conda/en/latest/user-guide/install/"
         exit 1
     fi
 
@@ -178,6 +354,15 @@ setup_environment() {
 
     ensure_project_root
 
+    # Detect platform
+    PLATFORM="$(uname -s)"
+    log_info "Detected platform: $PLATFORM"
+
+    if [[ "$PLATFORM" == "Darwin" ]]; then
+        log_warning "macOS detected: CUDA and embreex will be skipped"
+        log_warning "Scene generation will use CPU-only mode"
+    fi
+
     # Detect conda/mamba
     if command_exists mamba; then
         CONDA_CMD="mamba"
@@ -214,6 +399,14 @@ setup_environment() {
         exit 1
     fi
 
+    # Platform-specific optional dependencies
+    if [[ "$PLATFORM" != "Darwin" ]]; then
+        $CONDA_CMD install -n hsm -c nvidia pytorch-cuda=12.1 -y || log_warning "CUDA install failed"
+        conda run -n hsm pip install embreex || log_warning "embreex install failed"
+    else
+        log_info "Skipping CUDA and embreex on macOS"
+    fi
+
     activate_environment
 }
 
@@ -241,75 +434,12 @@ download_hssd_models() {
     mkdir -p data
     cd data
 
-    # Store original directory
-    ORIGINAL_DIR="$(pwd)"
-
-    # Download HSSD models (this is a large download ~72GB)
-    # Check if HSSD models are already downloaded (has .git directory)
-    if [ ! -d "hssd-models/.git" ]; then
-        log_info "Downloading HSSD models (~72GB)... This may take a while!"
-
-        # Check if git-lfs is available
-        if ! command_exists git-lfs; then
-            log_warning "git-lfs not found. Installing..."
-            if ! git lfs install; then
-                log_error "Failed to install git-lfs"
-                return 1
-            fi
-        fi
-
-        # Login to HF using token from .env file
-        if [ -f "../.env" ] && grep -q "HF_TOKEN=" ../.env; then
-            HF_TOKEN=$(grep "HF_TOKEN=" ../.env | cut -d'=' -f2 | sed 's/^"//' | sed 's/"$//')
-            if [ -n "$HF_TOKEN" ] && [ "$HF_TOKEN" != "your_huggingface_token_here" ]; then
-                log_info "Using Hugging Face token from .env file"
-                if ! hf auth login --token "$HF_TOKEN"; then
-                    log_error "Failed to login with HF token"
-                    return 1
-                fi
-            else
-                log_warning "HF_TOKEN not set in .env file, using interactive login"
-                if ! hf auth login; then
-                    log_error "Failed to login interactively"
-                    return 1
-                fi
-            fi
-        else
-            log_warning ".env file not found or HF_TOKEN not set, using interactive login"
-            if ! hf auth login; then
-                log_error "Failed to login interactively"
-                return 1
-            fi
-        fi
-
-        # Clone the dataset using git (try SSH first, then HTTPS, then hf download)
-        if ! git clone git@hf.co:datasets/hssd/hssd-models; then
-            log_warning "SSH clone failed, trying HTTPS..."
-            if ! git clone https://huggingface.co/datasets/hssd/hssd-models; then
-                log_warning "HTTPS clone failed, trying 'hf download'..."
-                if [ ! -d "hssd-models/objects/0" ]; then
-                    if ! hf download hssd/hssd-models --repo-type=dataset --local-dir hssd-models; then
-                        log_error "Failed to obtain HSSD models via git and hf download"
-                        log_info "Please check do you accept the license for HSSD models on Hugging Face and authentication setup"
-                        return 1
-                    fi
-                fi
-            fi
-        fi
-
-        log_success "HSSD models downloaded \n"
-    else
-        log_success "HSSD models repository already cloned \n"
+    if ! download_from_hf_git "hssd/hssd-models" "hssd-models" "" "" "true"; then
+        cd ..
+        return 1
     fi
 
     cd ..
-}
-
-# Helper function to ensure we're back in project root
-ensure_project_root() {
-    # Change to the directory where setup.sh is located
-    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-    cd "$SCRIPT_DIR"
 }
 
 # Download decomposed models from Hugging Face
@@ -322,33 +452,28 @@ download_decomposed_models() {
     
     log_info "Downloading decomposed models from Hugging Face..."
     mkdir -p data/hssd-models/objects
-
-    # Prepare token argument if available
-    HF_TOKEN_ARG=""
-    if [ -f ".env" ] && grep -q "HF_TOKEN=" .env; then
-        HF_TOKEN=$(grep "HF_TOKEN=" .env | cut -d'=' -f2 | sed 's/^"//' | sed 's/"$//')
-        if [ -n "$HF_TOKEN" ] && [ "$HF_TOKEN" != "your_huggingface_token_here" ]; then
-            HF_TOKEN_ARG="--token $HF_TOKEN"
-        fi
-    fi
-
-    # Download decomposed models
-    if ! hf download hssd/hssd-hab \
-        --repo-type=dataset \
-        --include "objects/decomposed/**/*_part_*.glb" \
-        --exclude "objects/decomposed/**/*_part.*.glb" \
-        --local-dir "data/hssd-models" \
-        $HF_TOKEN_ARG; then
-        log_error "Failed to download decomposed models"
+    cd data
+    
+    # Define include/exclude patterns for sparse checkout
+    local include_patterns=("objects/decomposed/**/*_part_*.glb")
+    local exclude_patterns=("objects/decomposed/**/*_part.*.glb")
+    
+    if ! download_from_hf_git "hssd/hssd-hab" "hssd-hab-temp" "${include_patterns[@]}" "${exclude_patterns[@]}" "false"; then
+        cd ..
         return 1
     fi
-
+    
     # Move decomposed folder to correct location
-    if [ -d "data/hssd-models/objects/decomposed" ]; then
+    if [ -d "hssd-hab-temp/objects/decomposed" ]; then
+        mv hssd-hab-temp/objects/decomposed hssd-models/objects/
+        safe_remove "hssd-hab-temp" "true"
         log_success "Decomposed models downloaded \n"
     else
         log_warning "Decomposed models not found in expected location"
+        safe_remove "hssd-hab-temp" "true"
     fi
+    
+    cd ..
 }
 
 # Download data from GitHub releases
@@ -487,6 +612,29 @@ download_support_surfaces() {
     fi
 }
 
+# Show usage instructions
+show_usage_instructions() {
+    # Detect conda/mamba if not already set
+    if [ -z "$CONDA_CMD" ]; then
+        if command_exists mamba; then
+            CONDA_CMD="mamba"
+        elif command_exists conda; then
+            CONDA_CMD="conda"
+        else
+            CONDA_CMD="conda"
+        fi
+    fi
+
+    log_info ""
+    log_info "To generate a scene with a description using HSM, run the following commands:"
+    log_info "1. $CONDA_CMD activate hsm"
+    log_info "2. python main.py -d 'your description'"
+    log_info "The default output directory is results/single_run"
+    log_info "Use python --help for all available generation options."
+    log_info "For more details, please refer to the README.md."
+    log_info ""
+}
+
 # Verify setup
 verify_setup() {
     ensure_project_root
@@ -540,12 +688,13 @@ verify_setup() {
 # Main setup function
 main() {
     echo -e "\n${BLUE}=======================================${NC}"
-    log_info "Starting HSM setup..."
+    log_info "Starting HSM auto setup..."
     log_info "========================================"
     echo ""
 
     # Parse command line arguments
     local force=false
+    local check_structure=false
 
     while [[ $# -gt 0 ]]; do
         case $1 in
@@ -553,11 +702,16 @@ main() {
                 force=true
                 shift
                 ;;
+            --verify)
+                check_structure=true
+                shift
+                ;;
             --help|-h)
                 echo "Usage: $0 [options]"
                 echo "Options:"
-                echo "  --force      Force recreation of environment"
-                echo "  --help       Show this help message"
+                echo "  --force            Force recreation of environment"
+                echo "  --verify  Only check file structure (skip setup)"
+                echo "  --help             Show this help message"
                 exit 0
                 ;;
             *)
@@ -567,6 +721,19 @@ main() {
                 ;;
         esac
     done
+
+    # If only checking structure, do that and exit
+    if [ "$check_structure" = true ]; then
+        ensure_project_root
+        if verify_setup; then
+            log_success "File structure check passed \n"
+            show_usage_instructions
+            exit 0
+        else
+            log_error "File structure check failed"
+            exit 1
+        fi
+    fi
 
     # Run setup steps
     next_step "Checking system requirements..."
@@ -585,7 +752,6 @@ main() {
     setup_environment
 
     next_step "Downloading HSSD models (~72GB)..."
-    log_info "HSM by default uses HSSD models for 3D model retrieval."
     ensure_project_root
     if ! download_hssd_models; then
         DOWNLOAD_FAILED=true
@@ -625,13 +791,7 @@ main() {
             exit 1
         else
             log_success "HSM setup completed successfully!"
-            log_info ""
-            log_info "To generate a scene with a description using HSM, run the following commands:"
-            log_info "1. $CONDA_CMD activate hsm"
-            log_info "2. python main.py -d 'your description'"
-            log_info "The default output directory is results/single_run"
-            log_info "For more details, please refer to the README.md."
-            log_info ""
+            show_usage_instructions
         fi
     else
         echo -e "\n"

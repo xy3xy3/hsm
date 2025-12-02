@@ -27,3 +27,68 @@ def round_nested_values(data, decimals=4):
     elif isinstance(data, (float, np.float32, np.float64)):
         return round(float(data), decimals)
     return data
+
+
+def extract_program(response: str, description: str):
+    """
+    Extract the program from the response of the VLM.
+
+    Args:
+        response: string, the response from the VLM
+        description: string, the description of the program
+
+    Returns:
+        program: Program, the program extracted from the response
+    """
+    from hsm_core.scene_motif.programs.program import Program
+
+    if "```python" in response:
+        response = response.split("```python\n")[1]
+        response = response.split("```")[0]
+
+    response = response.rstrip()
+
+    code = response.split("\n")
+    program = Program(code, description)
+
+    return program
+
+
+def extract_code(response: str) -> str:
+    """
+    Extract the code from the response of the VLM.
+
+    Args:
+        response: string, the response from the VLM
+
+    Returns:
+        code: string, the code extracted from the response
+    """
+
+    if "```python" in response:
+        response = response.split("```python\n")[1]
+        response = response.split("```")[0]
+
+    response = response.rstrip()
+
+    return response
+
+
+def extract_json(response: str) -> str:
+    """
+    Extract the JSON string from the response of the VLM.
+
+    Args:
+        response: string, the response from the VLM
+
+    Returns:
+        str: The extracted JSON string
+    """
+
+    if "```json" in response:
+        response = response.split("```json\n")[1]
+        response = response.split("```")[0]
+
+    response = response.rstrip()
+
+    return response

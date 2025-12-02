@@ -10,7 +10,7 @@ DATA_PATH = PROJECT_ROOT / "data"
 HSSD_PATH = DATA_PATH / "hssd-models"
 
 GLOBAL_LOGGING_LEVEL_THRESHOLD = logging.DEBUG
-LOGGING_LEVEL_TERMINAL = logging.WARNING
+LOGGING_LEVEL_TERMINAL = logging.FATAL
 LOGGING_LEVEL_FILE = logging.INFO
 
 # if __name__ == "__main__":

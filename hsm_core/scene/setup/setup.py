@@ -265,7 +265,17 @@ def create_new_scene_from_config(
     """
     room_description = cfg.room.room_description
     model_type = _get_model_type_from_config(cfg)
-    room_session = create_session(str(PROMPT_DIR / "scene_prompts_room.yaml"), model_type=model_type)
+    
+    # Get model name from config if available
+    model_name = None
+    if hasattr(cfg, 'llm') and hasattr(cfg.llm, 'model_name'):
+        model_name = cfg.llm.model_name
+    
+    room_session = create_session(
+        str(PROMPT_DIR / "scene_prompts_room.yaml"), 
+        model_type=model_type,
+        model_name=model_name
+    )
     
     # Determine room type
     room_type_response = room_session.send_with_validation(
@@ -322,15 +332,14 @@ def setup_scene_environment(
     setup_logging(output_dir)
     logger = get_logger('scene.setup')
     sessions_dir = output_dir / "vlm_sessions"
-    # sessions_dir.mkdir(exist_ok=True)
-    
+    sessions_dir.mkdir(exist_ok=True)
+
     model_type = _get_model_type_from_config(cfg) if cfg else 'gpt'
-    # from hsm_core.vlm.gpt import Session
-    # Session.set_global_output_dir(str(sessions_dir))
+    from hsm_core.vlm.gpt import Session
+    Session.set_global_output_dir(str(sessions_dir))
 
     if room_session is None:
-        room_session = create_session(str(PROMPT_DIR / "scene_prompts_room.yaml"), model_type=model_type)
-    # room_session.output_dir = str(sessions_dir)
+        room_session = create_session(str(PROMPT_DIR / "scene_prompts_room.yaml"), model_type=model_type, output_dir=str(sessions_dir))
 
     visualizer = SceneVisualizer(scene)
     

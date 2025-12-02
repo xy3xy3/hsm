@@ -11,6 +11,7 @@ from typing import Dict, List, Optional, Tuple, TYPE_CHECKING
 from hsm_core.utils import get_logger
 
 import hsm_core.vlm.gpt as gpt
+from hsm_core.vlm.vlm import create_session
 from hsm_core.config import PROMPT_DIR
 
 if TYPE_CHECKING:
@@ -23,7 +24,8 @@ async def decompose_motif_async(
     motif: "SceneMotif",
     max_attempts: int = 3,
     session: Optional[gpt.Session] = None,
-    custom_logger: Optional[logging.Logger] = None
+    custom_logger: Optional[logging.Logger] = None,
+    output_dir: Optional[str] = None
 ) -> Tuple[Optional[str], Optional[Dict]]:
     """
     Asynchronously decompose a single motif into arrangement JSON.
@@ -33,19 +35,21 @@ async def decompose_motif_async(
         max_attempts: Maximum number of decomposition attempts
         session: Optional existing session to use (will create new if None)
         custom_logger: Optional logger for detailed logging (will use module logger if None)
+        output_dir: Optional output directory for saving session files
 
     Returns:
         Tuple of (arrangement_json, validation_response)
     """
     from ..utils import send_llm_async, send_llm_with_validation_async
-    from ..utils.validation import validate_remaining_arrangements, validate_compositional_json
+    from ..utils.validation import validate_remaining_arrangements, validate_compositional_json, ALL_MOTIFS_FROM_DATA
 
     try:
         if session is not None:
             decompose_session = session
         else:
-            decompose_session = gpt.Session(
+            decompose_session = create_session(
                 str(PROMPT_DIR / "sm_prompts_decompose.yaml"),
+                output_dir=output_dir if output_dir else "",
                 prompt_info={"MOTIF_DEFINITIONS": yaml.safe_load(open(PROMPT_DIR / "motif_definitions.yaml"))["motifs"]}
             )
 
@@ -92,6 +96,7 @@ async def decompose_motif_async(
                 log.info(f"Remaining objects after primary: {remaining_objects}")
 
             # Step 2: Secondary arrangements
+            available_motif_types = ", ".join(sorted(ALL_MOTIFS_FROM_DATA))
             if custom_logger:
                 log.info(f"Step 2: Processing secondary arrangements...")
 
@@ -102,7 +107,7 @@ async def decompose_motif_async(
                 # Can start compositional JSON generation immediately
                 arrangement_json_task = asyncio.create_task(send_llm_with_validation_async(
                     decompose_session, "generate_compositional_json",
-                    {"description": motif.description, "primary_arrangement": primary_arrangement, "secondary_arrangements": secondary_arrangements},
+                    {"description": motif.description, "primary_arrangement": primary_arrangement, "secondary_arrangements": secondary_arrangements, "available_motif_types": available_motif_types},
                     validate_compositional_json, is_json=True
                 ))
                 arrangement_json = await arrangement_json_task
@@ -155,6 +160,8 @@ async def decompose_motif_async(
             
             if custom_logger:
                 log.info(f"Successfully completed decomposition for motif {motif.id}")
+            
+            session_path = decompose_session.save_session("decompose_session.json")
             return arrangement_json, validate_response
 
         if custom_logger:

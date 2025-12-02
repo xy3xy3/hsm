@@ -56,23 +56,9 @@ def create_scene_from_motifs(
     if room_polygon:
         scene_placer.create_room_geom(room_polygon, door_location, window_location)
 
-    # Build scene context for parent lookups
-    scene_context: Dict[int, Tuple[SceneMotif, ObjectSpec]] = {}
-    all_motifs_for_context = []
-    for m in scene_motifs:
-        all_motifs_for_context.append(m)
-        for obj in m.objects:
-            if obj.child_motifs:
-                all_motifs_for_context.extend(obj.child_motifs)
-
-    for motif in all_motifs_for_context:
-        if hasattr(motif, 'object_specs') and motif.object_specs:
-            for obj_spec in motif.object_specs:
-                if hasattr(obj_spec, 'id') and obj_spec.id is not None:
-                    try:
-                        scene_context[int(obj_spec.id)] = (motif, obj_spec)
-                    except (ValueError, TypeError):
-                        logger.warning(f"Skipping object spec with non-integer ID {obj_spec.id} in motif {motif.id}")
+    # Build scene context for parent lookups using Scene class static method
+    from hsm_core.scene.core.manager import Scene
+    scene_context = Scene.build_scene_context_from_motifs(scene_motifs)
     logger.debug(f"Built scene context with {len(scene_context)} object specs for parent lookups")
     
     all_scene_objects: List[SceneObject] = []
@@ -133,8 +119,12 @@ def create_scene_objects_from_motif(
         A list of all SceneObjects created from this motif and its children.
     """
     # Return optimized objects directly if available
-    if motif.is_spatially_optimized and hasattr(motif, '_scene_objects') and motif._scene_objects:
-        return list(motif._scene_objects.values())
+    if motif.is_spatially_optimized:
+        if motif._scene_objects:
+            logger.debug(f"Using cached objects for optimized motif '{motif.id}' ({len(motif._scene_objects)} objects)")
+            return list(motif._scene_objects.values())
+        else:
+            raise RuntimeError(f"Motif '{motif.id}' is spatially optimized but missing cached objects. This will cause collisions.")
 
     # Extract wall ID and parent name
     wall_id = _get_wall_id(motif)
@@ -238,11 +228,40 @@ def process_arrangement_objects(arrangement, motif_rotation: float = 0,
             logger.debug(f"Computed rotation angle (from -Z): {rotation_angle}°")
             logger.debug("="*50)
 
+        # Calculate world-space bounding box dimensions after transformation
+        # For accurate collision detection, we need the axis-aligned bounding box
+        # of the rotated object, not just the rotated bounding box dimensions
+
+        local_centroid = obj.bounding_box.centroid
+        local_half_size = obj.bounding_box.half_size
+
+        # Create the 8 corners of the axis-aligned bounding box
+        # Format: [[±x, ±y, ±z]] scaled by half_size and offset by centroid
+        corners = np.array([
+            local_centroid + local_half_size * np.array([1, 1, 1]),
+            local_centroid + local_half_size * np.array([1, 1, -1]),
+            local_centroid + local_half_size * np.array([1, -1, 1]),
+            local_centroid + local_half_size * np.array([1, -1, -1]),
+            local_centroid + local_half_size * np.array([-1, 1, 1]),
+            local_centroid + local_half_size * np.array([-1, 1, -1]),
+            local_centroid + local_half_size * np.array([-1, -1, 1]),
+            local_centroid + local_half_size * np.array([-1, -1, -1])
+        ])
+
+        # Transform corners by motif rotation
+        transformed_corners = np.dot(motif_rotation_matrix[0:3, 0:3], (corners - local_centroid).T).T + local_centroid
+
+        # Find axis-aligned bounding box of transformed corners
+        world_min = np.min(transformed_corners, axis=0)
+        world_max = np.max(transformed_corners, axis=0)
+        world_half_size = (world_max - world_min) / 2
+        world_dimensions = world_half_size * 2
+
         # Create SceneObject instance
         scene_obj: SceneObject = SceneObject(
             name=obj.label,
             position=(center[0], center[1], center[2]),
-            dimensions=(obj.bounding_box.half_size * 2),  # Convert half_size to full dimensions.
+            dimensions=world_dimensions,  # Use world-space dimensions for correct collision detection
             rotation=rotation_angle,
             mesh_path=obj.mesh_path,
             obj_type=object_type,
@@ -335,8 +354,15 @@ def _adjust_motif_rotation(motif_rotation: float, object_type: ObjectType) -> fl
 
 def _calculate_world_transform(local_transform: np.ndarray, motif_rotation_matrix: np.ndarray,
                               motif_position: Tuple[float, float, float]) -> np.ndarray:
-    """Calculate world transform from local transform, motif rotation, and position."""
-    # Combine transforms: world = motif rotation * local transform
+    """Calculate world transform from local transform, motif rotation, and position.
+
+    Fixed transformation order:
+    1. Apply object's local transform (position + rotation within motif)
+    2. Apply motif rotation around motif center
+    3. Apply motif translation
+
+    """
+    # The original approach: apply motif rotation to entire local transform
     world_transform = np.dot(motif_rotation_matrix, local_transform)
 
     # Add translation from motif position
@@ -346,6 +372,8 @@ def _calculate_world_transform(local_transform: np.ndarray, motif_rotation_matri
     world_transform[0:3, 3] += position_offset
 
     return world_transform
+
+
 
 
 def _calculate_rotation_angle(rotation_matrix: np.ndarray) -> float:

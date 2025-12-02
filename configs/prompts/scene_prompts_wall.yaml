@@ -158,5 +158,7 @@ position_wall_objects: >-
   - Reference the image to ensure objects are placed in valid, unblocked areas
 
 invalid_response: >-
-  <FEEDBACK>
-  Please revise your suggestion.
+  """<FEEDBACK>"""
+  
+  You MUST fix this error in your response. Do NOT repeat the same mistake.
+  Please provide a corrected response that addresses the error above.

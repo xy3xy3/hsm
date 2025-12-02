@@ -28,22 +28,18 @@ dependencies:
   # For CLIP
   - pytorch
   - torchvision
-  - pytorch-cuda=12.1
+  # - pytorch-cuda=12.1
   - regex
   - tqdm
-
-  # For more intelligent object retrieval
   - open-clip-torch
 
   - pip:
-    - git+https://github.com/openai/CLIP.git
-
     - huggingface-hub
 
     # For trimesh collision detection and raycasting
     - python-fcl
     - manifold3d
-    - embreex
+    # - embreex  # Uncomment for faster trimesh raycasting on x86_64 platforms
 
     - earcut
     - compress_json

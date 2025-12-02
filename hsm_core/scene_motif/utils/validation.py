@@ -133,17 +133,20 @@ def is_sm_exceeds_support_region(
     
     return False 
 
-def validate_compositional_json(response: str) -> tuple[bool, str, int]:
+def validate_compositional_json(response: str, is_root: bool = True) -> tuple[bool, str, int]:
     """
     Validate the arrangement JSON response format and content, including motif-specific
-    element counts with constraints.
+    element counts using constraints loaded from llm/motif_definitions.yaml.
 
     Args:
         response (str): The JSON response containing arrangement information
+        is_root (bool): Whether this is the root-level validation call (default: True)
 
     Returns:
         Tuple[bool, str, int]: (is_valid, error_message, error_code)
     """
+    if not MOTIF_CONSTRAINTS_DATA:
+        return False, "Motif constraints data is not loaded. Cannot validate.", 7 
 
     try:
         layout_data = json.loads(gpt.extract_json(response))
@@ -164,9 +167,17 @@ def validate_compositional_json(response: str) -> tuple[bool, str, int]:
 
         motif_type = layout_data["type"]
         
+        # -- Root-level validation: root cannot be "object" --
+        if is_root and motif_type.lower() == "object":
+            valid_types = sorted(ALL_MOTIFS_FROM_DATA)
+            types_list = ", ".join([f"'{t}'" for t in valid_types])
+            return False, f"Root type cannot be 'object'. Root must be a valid motif type. Available types: {types_list}", 8
+        
         # -- Check that motif_type is recognized and get its constraints --
         if motif_type not in MOTIF_CONSTRAINTS_DATA:
-            return False, f"Unknown or unsupported motif type '{motif_type}'", 8
+            valid_types = sorted(ALL_MOTIFS_FROM_DATA)
+            types_list = ", ".join([f"'{t}'" for t in valid_types])
+            return False, f"Unknown or unsupported motif type '{motif_type}'. Available types: {types_list}", 8
         
         constraints = MOTIF_CONSTRAINTS_DATA[motif_type]
         min_elements = constraints.get('min_unique_types', 1) # Default to 1 if not specified
@@ -212,14 +223,16 @@ def validate_compositional_json(response: str) -> tuple[bool, str, int]:
 
             # Case B: nested motif
             elif elem_type in ALL_MOTIFS_FROM_DATA:
+                # Re-serialize the nested motif dict and recurse
                 nested_json_str = json.dumps(element) # This is the string to pass for recursion
-                valid, msg, code = validate_compositional_json(nested_json_str) # Pass string, not dict
+                valid, msg, code = validate_compositional_json(nested_json_str, is_root=False) # Pass string, not dict
                 if not valid:
                     return False, f"Nested motif in element #{idx} ('{elem_type}') invalid: {msg}", 13
 
             else:
                 return False, f"Unknown element type '{elem_type}' in element #{idx}", 10
 
+        # If all checks pass
         return True, "", -1
 
     except json.JSONDecodeError:

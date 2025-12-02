@@ -2,7 +2,7 @@
 # Default values from the paper are set here
 
 # room_description: The main prompt for a new scene generation
-# If None, the room geometry will be populated by the VLM according to the room description
+# If null, the room geometry will be populated by the VLM according to the room description
 room:
   room_description: "A small living room with a l-shape desk with a chair. The desk have a monitor and keyboard on top. There is a painting near the desk and a wall shelf with a plant on top."
   vertices: null

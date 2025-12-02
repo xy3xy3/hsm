@@ -53,12 +53,13 @@ def main() -> None:
 
     logger = get_logger('main')
     print("HSM Scene Generation Started")
+    print("Generating scene with description:", cfg.room.room_description)
     logger.debug(f"Command line arguments: {args}")
 
     success = asyncio.run(process_scene(cfg, logger, project_root=project_root))
     timestamp = time.strftime("%Y%m%d_%H%M%S")
     if success:
-        print(f"HSM Scene generation completed successfully at {timestamp}!")
+        print(f"HSM Scene generation succeeded at {timestamp}!")
     else:
         print(f"HSM Scene generation failed at {timestamp}!")
 

@@ -134,15 +134,17 @@ class Arrangement:
             
         return scene
     
-    def save(self, file_path: str = "saved_arrangement.glb") -> None:
+    def save(self, file_path: str = "saved_arrangement.glb", center: bool = True) -> None:
         """
         Save the arrangement to a .glb file.
 
         Args:
             file_path: string, the path to the file to save the arrangement to
+            center: bool, whether to center the arrangement before saving (default: True)
         """
         try:
-            self.center()
+            if center:
+                self.center()
             self.to_scene().export(file_path)
             self.glb_path = file_path
             logging.info(f"Arrangement saved to {file_path}")

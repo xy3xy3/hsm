@@ -11,6 +11,7 @@ from hsm_core.scene_motif.generation.processing.batch_inference import batch_inf
 from hsm_core.scene.core.spec import ObjectSpec
 from hsm_core.scene.core.objecttype import ObjectType
 from hsm_core.utils import get_logger
+from hsm_core.scene_motif.utils.utils import release_arrangement_meshes
 
 logger = get_logger('scene.generate_motif')
 
@@ -96,7 +97,6 @@ async def process_scene_motifs(
             arrangement_groups[signature] = []
 
         arrangement_groups[signature].append(arrangement)
-
     logger.info(f"Found {len(unique_arrangements)} unique arrangements from {len(motif_spec.get('arrangements', []))} total arrangements")
 
     unique_motifs: List[SceneMotif] = []
@@ -167,6 +167,9 @@ async def process_scene_motifs(
                 scene_motifs.append(duplicate_motif)
     
     logger.info(f"Generated {len(scene_motifs)} total scene motifs.")
+    
+    for motif in processed_unique_motifs:
+        release_arrangement_meshes(motif.arrangement)
 
     motif_figs = [motif.fig for motif in processed_unique_motifs if hasattr(motif, 'fig') and motif.fig is not None]  # type: ignore
 
@@ -174,7 +177,6 @@ async def process_scene_motifs(
         return scene_motifs, None
 
     fig_height = 5 * ((len(motif_figs) + 1) // 2)
-
     combined_fig = combine_figures(
         figures=motif_figs,
         num_cols=2,

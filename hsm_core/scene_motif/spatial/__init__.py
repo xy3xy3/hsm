@@ -2,7 +2,7 @@
 Spatial Optimization for scene motifs
 """
 
-from .hierarchical_optimizer import optimize_with_hierarchy
+from .hierarchical_optimizer import optimize_hierarchical
 from .spatial_optimizer import optimize
 
 def optimize_sm(arrangement, hierarchy=None, **kwargs):
@@ -26,7 +26,18 @@ def optimize_sm(arrangement, hierarchy=None, **kwargs):
         return arrangement  # Return unchanged arrangement
 
     if hierarchy and hierarchy.root:
-        return optimize_with_hierarchy(arrangement, hierarchy=hierarchy, **kwargs)
+        optimized_hierarchy = optimize_hierarchical(hierarchy, **kwargs)
+        
+        if optimized_hierarchy.root and optimized_hierarchy.root.arrangement:
+            result_arrangement = optimized_hierarchy.root.arrangement
+            # Attach hierarchy for later extraction
+            setattr(result_arrangement, '_hierarchy', optimized_hierarchy)
+            return result_arrangement
+        else:
+            from hsm_core.utils import get_logger
+            logger = get_logger('scene_motif.spatial')
+            logger.warning("Hierarchical optimization failed, falling back to standard optimization")
+            return optimize(arrangement, **kwargs)
     else:
         return optimize(arrangement, **kwargs)
 

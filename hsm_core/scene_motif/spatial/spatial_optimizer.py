@@ -17,9 +17,10 @@ def optimize(
     make_tight: bool = False,
     make_tight_iters: int = 10,
     approximate_gravity: bool = True,
+    global_min_y: float | None = None,
 ) -> Arrangement:
     '''
-    Optimize the spatial positions and orientations of the objects in the arrangement 
+    Optimize the spatial positions and orientations of the objects in the arrangement
     such that they are physically possible.
 
     Args:
@@ -30,6 +31,7 @@ def optimize(
         make_tight: bool, whether to make the objects fit tightly together
         make_tight_iters: int, the number of iterations to make the objects fit tightly together
         approximate_gravity: bool, whether to approximate gravity
+        global_min_y: float, optional minimum Y coordinate for floor plane. If None, calculated from object bounds.
 
     Returns:
         optimized_arrangement: Arrangement, the optimized arrangement
@@ -37,13 +39,16 @@ def optimize(
 
     # Pre-filter objects with meshes once
     obj_with_mesh = [obj for obj in arrangement.objs if obj.has_mesh]
-    
-    # If no objects have meshes, return the original arrangement
     if not obj_with_mesh:
         logger.warning("No objects with meshes found in arrangement")
         return arrangement  # Return original instead of None
 
-    all_meshes = deepcopy([obj.mesh for obj in obj_with_mesh])
+    # Create world-space copies for collision detection
+    all_meshes = []
+    for obj in obj_with_mesh:
+        world_mesh = obj.mesh.copy()
+        world_mesh.apply_transform(obj.bounding_box.no_scale_matrix)
+        all_meshes.append(world_mesh)
 
     # Initialize managers and timing
     collision_manager = trimesh.collision.CollisionManager()
@@ -61,7 +66,6 @@ def optimize(
     applied_transformations = np.tile(np.eye(4), (len(obj_with_mesh), 1, 1))
     
     for i, (obj, mesh) in enumerate(zip(obj_with_mesh, all_meshes)):
-        mesh.apply_transform(obj.bounding_box.no_scale_matrix)
         
         # Skip the first mesh as there is nothing to compare against
         if i >= 1 and isinstance(arrangement, Arrangement):
@@ -172,16 +176,23 @@ def optimize(
         settled_meshes_union = None
          
         # Sort meshes by their centroid Y position to process them from bottom to top.
-        indexed_meshes = list(enumerate(all_meshes))        
+        indexed_meshes = [(i, mesh) for i, mesh in enumerate(all_meshes)]
         sorted_indexed_meshes = sorted(indexed_meshes, key=lambda item: item[1].centroid[1])
         
         for i, (orig_idx, mesh) in enumerate(sorted_indexed_meshes):
             logger.debug(f"  {i+1}. Object {orig_idx} at Y centroid: {mesh.centroid[1]:.3f}")
 
         # Create a floor plane below all objects to act as the ultimate ground.
-        combined_static_mesh: trimesh.Trimesh = trimesh.util.concatenate(all_meshes)
-        global_min_y = np.min(combined_static_mesh.bounds[:, 1])
-        floor_plane: trimesh.Trimesh = trimesh.creation.box(extents=[10, 0.01, 10], transform=trimesh.transformations.translation_matrix([0, global_min_y - 0.005, 0]))
+        if global_min_y is not None:
+            # Use provided global_min_y
+            floor_y = global_min_y - 0.0001
+        else:
+            # Calculate from object bounds
+            combined_static_mesh: trimesh.Trimesh = trimesh.util.concatenate(all_meshes)
+            global_min_y = np.min(combined_static_mesh.bounds[:, 1])
+            floor_y = global_min_y - 0.0001
+
+        floor_plane: trimesh.Trimesh = trimesh.creation.box(extents=[10, 0.01, 10], transform=trimesh.transformations.translation_matrix([0, floor_y, 0]))
 
         # Process each mesh in bottom-up order.
         for process_idx, (original_index, mesh) in enumerate(sorted_indexed_meshes):
@@ -195,7 +206,7 @@ def optimize(
 
             normals = mesh.face_normals[face_idxs]
             # Consider points where the normal has a negative Y component (facing down).
-            ground_facing_mask = normals[:, 1] < -0.1  # More lenient threshold for downward-facing
+            ground_facing_mask = normals[:, 1] < 0.0  # Accept any downward component
             ground_facing_pts = surface_pts[ground_facing_mask]
             
             if len(ground_facing_pts) == 0:
@@ -220,17 +231,17 @@ def optimize(
                 
                 # Only apply gravity if there's a significant gap (avoid tiny adjustments)
                 min_distance_to_drop = np.min(distances)
-                if min_distance_to_drop > 0.001:  # 1mm threshold
+                if min_distance_to_drop > 0.0001:
                     logger.debug(f"Dropping object {original_index} by {min_distance_to_drop:.3f}m")
-                    
+
                     # Apply the gravity translation.
                     gravity_translation = [0, -min_distance_to_drop, 0]
                     translation_matrix = trimesh.transformations.translation_matrix(gravity_translation)
                     mesh.apply_transform(translation_matrix)
-                    # Update the transformation for this specific object using its original index.
+                    # Update the transformation for this specific object using its obj_with_mesh index.
                     applied_transformations[original_index] = np.dot(translation_matrix, applied_transformations[original_index])
                 else:
-                    logger.debug(f"Object {original_index} already properly supported (gap: {min_distance_to_drop:.4f}m)")
+                    logger.debug(f"Object {original_index} already properly supported (gap: {min_distance_to_drop:.5f}m)")
             else:
                 logger.debug(f"No support intersection found for object {original_index}")
 
@@ -266,8 +277,12 @@ def optimize(
         mesh_idx = obj_with_mesh_indices[id(orig_obj)]
         tf = applied_transformations[mesh_idx]
         
-        # homogeneous multiply
-        c4 = np.append(new_obj.bounding_box.centroid, 1.0)
+        # Decompose the accumulated transform into rotation and translation
+        # The transform represents the change from the original world position
+        rotation = tf[:3, :3]
+        translation = tf[:3, 3]
+        new_obj.bounding_box.coord_axes = rotation @ orig_obj.bounding_box.coord_axes
+        c4 = np.append(orig_obj.bounding_box.centroid, 1.0)
         new_obj.bounding_box.centroid = (tf @ c4)[:3]
     
     logger.info(f"[{short_label}] Optimized all objects in {(time.time() - overall_start_time):.3f} s")

@@ -43,6 +43,11 @@ system: >-
   - All rotations are in degrees (Y-axis)
   - All objects maintain y=0 unless stacking/height required
 
+  Here are the functions that exists:
+  1. create(label: str, half_size: list[float]) -> Obj: Create a new object with the given `label` and `half_size`. The `half_size` is a list of three floats representing the half of the size of the object in the x, y, and z dimensions.
+  2. move(obj: Obj, x: float, y: float, z: float) -> None: Move the object `obj` to the world coordinate (x, y, z). The object's position is the centroid of the object's bounding box.
+  3. rotate(obj: Obj, axis: str, angle: float) -> None: Rotate the object `obj` around its local axis (x, y, or z) by the given angle.
+
 ##############################################################################
 # describe_meta_program: >-
 #   Here is a meta-program that generalizes a spatial arrangement of type "<MOTIF_TYPE>":
@@ -88,7 +93,7 @@ inference_hierarchical: >-
   - The world is in a right-handed coordinate system, that is, when looking from the front, the x-axis is to the right, the y-axis is up, and the z-axis is towards the viewer.
 
   Write a few sentences on how you will generate a function call to the meta-program to create the arrangement described and the reasoning behind particular arguments.
-  Then respond with a single function call that implements the arrangement described wrapped in a code block.
+  Then respond only with the function call wrapped in a code block without the provided function definition and comments.
   ```python
   ```
 
@@ -184,9 +189,11 @@ inference: >-
   Assume the objects are large so make sure they are spaced out enough to not intersect.
   When placing objects, consider how human would organize them in real life.
   For example, large objects are usually placed at the bottom and smaller objects on top.
-  Please respond with code - the function call with the inferred arguments only.
 
-  Only responsd with one function call.
+  Write a few sentences on how you will generate a function call to the meta-program to create the arrangement described and the reasoning behind particular arguments.
+  Then respond only with the function call wrapped in a code block without the provided function definition and comments.
+  ```python
+  ```
 
 inference_feedback: >-
   I could not run the meta-program using the function call you provided.
@@ -244,5 +251,7 @@ validate: >-
 # "back_side": <north, south, east, west> (the side of the arrangement that is facing away from the viewer)
 ##############################################################################
 invalid_response: >-
-  <FEEDBACK>
-  Please try again.
+  """<FEEDBACK>"""
+  
+  You MUST fix this error in your response. Do NOT repeat the same mistake.
+  Please provide a corrected response that addresses the error above.

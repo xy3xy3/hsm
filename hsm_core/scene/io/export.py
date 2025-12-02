@@ -61,6 +61,7 @@ def export_scene(scene, output_path: Path, recreate_scene: bool = False) -> None
     logger.info(f"Exporting GLB to {output_path}")
     if scene.scene:
         try:
+            output_path.parent.mkdir(parents=True, exist_ok=True)
             scene.scene.export(output_path, file_type='glb')
         except (OSError, AttributeError) as e:
             logger.error(f"Error exporting scene: {e}")

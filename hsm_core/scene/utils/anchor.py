@@ -1,6 +1,7 @@
 import json
 
-from hsm_core.vlm.gpt import Session, extract_json
+from hsm_core.vlm.vlm import create_session
+from hsm_core.vlm.gpt import extract_json
 from hsm_core.scene.core.motif import SceneMotif
 from hsm_core.scene.core.objects import SceneObject
 from hsm_core.config import PROMPT_DIR
@@ -24,7 +25,7 @@ def find_anchor_object(scene_motif: SceneMotif, object_names: list[str] = []) ->
         Returns [], [] if no valid objects are found.
     """
     # Initialize GPT session with small objects prompt
-    small_obj_session = Session(str(PROMPT_DIR / "scene_prompts_small.yaml"))
+    small_obj_session = create_session(str(PROMPT_DIR / "scene_prompts_small.yaml"))
     
     if not object_names:
         _, all_object_names = scene_motif.get_objects_by_names()

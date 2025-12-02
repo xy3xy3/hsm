@@ -78,7 +78,7 @@ def _parse_rotation_axis(side_raw: str) -> List[float]:
     return [1.0, 0.0, 0.0]
 
 
-def _apply_rotation_optimization(obj: SceneObject, loaded_obj: trimesh.Trimesh, verbose: bool) -> None:
+def _apply_rotation_metadata(obj: SceneObject, loaded_obj: trimesh.Trimesh, verbose: bool) -> None:
     """Apply rotation optimization transform to the loaded mesh."""
 
     try:
@@ -267,12 +267,6 @@ def _apply_mesh_mirroring(obj: SceneObject, loaded_obj: trimesh.Trimesh, verbose
         )
         loaded_obj.apply_transform(mirror_mat)
 
-        # Fix normals if possible
-        try:
-            loaded_obj.fix_normals()
-        except Exception:
-            pass  # Ignore if normals cannot be fixed; Trimesh will auto-handle most cases
-
         # Store transformation data
         obj._preprocessing_data = getattr(obj, '_preprocessing_data', {})
         obj._preprocessing_data['mirror_transform'] = mirror_mat.tolist()
@@ -289,12 +283,7 @@ def _apply_mesh_mirroring(obj: SceneObject, loaded_obj: trimesh.Trimesh, verbose
 def preprocess_object_mesh(obj: SceneObject, verbose: bool = False) -> Optional[trimesh.Trimesh]:
     """
     Standalone function to preprocess object mesh by loading, applying HSSD transforms, and normalizing.
-
-    This function implements robust mesh loading with multiple fallback strategies:
-    1. Standard trimesh.load with force="mesh"
-    2. Alternative loading without force parameter for multi-scene GLBs
-    3. Fallback to bounding box extraction for corrupted/unsupported files
-
+    
     Args:
         obj: SceneObject to preprocess
         verbose: Whether to print debug information
@@ -308,7 +297,7 @@ def preprocess_object_mesh(obj: SceneObject, verbose: bool = False) -> Optional[
     # Validate mesh path exists
     if not obj.mesh_path or not os.path.exists(obj.mesh_path):
         error_msg = f"Mesh file not found: {obj.mesh_path}"
-        logger.error(error_msg)
+        logger.error(msg=error_msg)
         if verbose:
             logger.error(f"ERROR: {error_msg}")
         return None
@@ -333,7 +322,7 @@ def preprocess_object_mesh(obj: SceneObject, verbose: bool = False) -> Optional[
             logger.error(f"ERROR: {error_msg}")
         return None
 
-    _apply_rotation_optimization(obj, loaded_obj, verbose)
+    _apply_rotation_metadata(obj, loaded_obj, verbose)
     _apply_hssd_alignment(obj, loaded_obj, loading_strategy, verbose)
 
     # Store loading strategy for debugging

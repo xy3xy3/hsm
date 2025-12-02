@@ -1,5 +1,5 @@
 import time
-from typing import List, Optional, Tuple, Dict, TYPE_CHECKING
+from typing import List, Optional, Tuple, Dict, TYPE_CHECKING, Set
 from copy import deepcopy
 import numpy as np
 from pathlib import Path
@@ -66,8 +66,26 @@ def calculate_arrangement_half_size(objects):
     half_size = full_size / 2
     return tuple(half_size)
 
-def extract_objects(result, lookup: Optional[dict] = None) -> List[Obj]:
-    """Extract objects from nested arrangements"""
+def extract_objects(result, lookup: Optional[dict] = None, *, visited: Optional[Set[int]] = None) -> List[Obj]:
+    """Extract objects from nested arrangements
+
+    Args:
+        result: Arrangement, Obj, list/tuple of arrangements/objs, or dict of arrangements to extract from.
+        lookup: Optional mapping used to resolve entries like 'sub_arrangements[i]'.
+        visited: Internal set of object ids already traversed to avoid infinite recursion.
+
+    Returns:
+        A flat list of Obj instances extracted from the nested structure.
+    """
+    if visited is None:
+        visited = set()
+
+    result_id = id(result)
+    if result_id in visited:
+        return []
+
+    visited.add(result_id)
+
     logger.debug(f"Extracting objects from {result.__class__.__name__}")
     
     if isinstance(result, Arrangement):
@@ -83,14 +101,8 @@ def extract_objects(result, lookup: Optional[dict] = None) -> List[Obj]:
                     # Try lookup table first
                     if lookup is not None and obj_name in lookup:
                         logger.debug(f"Found arrangement in lookup for {obj_name}")
-                        nested_objs = extract_objects(lookup[obj_name], lookup)
+                        nested_objs = extract_objects(lookup[obj_name], lookup, visited=visited)
                         logger.debug(f"Extracted objects from lookup: {[o.label for o in nested_objs]}")
-                        all_objs.extend(nested_objs)
-                    # Fall back to referenced arrangement
-                    elif hasattr(obj, '_referenced_arrangement'):
-                        logger.debug(f"Found referenced arrangement")
-                        nested_objs = extract_objects(obj._referenced_arrangement, lookup)
-                        logger.debug(f"Extracted objects from reference: {[o.label for o in nested_objs]}")
                         all_objs.extend(nested_objs)
                     else:
                         logger.warning(f"No arrangement found for {obj_name}")
@@ -108,7 +120,7 @@ def extract_objects(result, lookup: Optional[dict] = None) -> List[Obj]:
         all_objs = []
         for key, arr in result.items():
             logger.debug(f"Processing key: {key}")
-            all_objs.extend(extract_objects(arr, lookup))
+            all_objs.extend(extract_objects(arr, lookup, visited=visited))
         return all_objs
         
     elif isinstance(result, (list, tuple)):
@@ -117,7 +129,7 @@ def extract_objects(result, lookup: Optional[dict] = None) -> List[Obj]:
         for item in result:
             if isinstance(item, (Arrangement, dict, list, tuple)) or hasattr(item, 'objs'):
                 logger.debug(f"Processing nested {item.__class__.__name__}")
-                all_objs.extend(extract_objects(item, lookup))
+                all_objs.extend(extract_objects(item, lookup, visited=visited))
             elif isinstance(item, Obj):
                 logger.debug(f"Found object: {item.label}")
                 all_objs.append(item)
@@ -193,4 +205,20 @@ async def persist_motif_arrangement(
         except AttributeError:
             pass
 
-    return motif 
+    return motif
+
+def release_arrangement_meshes(arrangement: Arrangement) -> None:
+    """
+    Release mesh data from arrangement objects to free memory.
+    Meshes can be reloaded from mesh_path when needed.
+    
+    Args:
+        arrangement: Arrangement whose object meshes should be released
+    """
+    if arrangement is None:
+        return
+    
+    for obj in arrangement.objs:
+        if obj.mesh is not None:
+            # Keep mesh_path for reloading, just release the mesh data
+            obj.mesh = None 
