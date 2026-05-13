@@ -19,6 +19,37 @@ WALL_CORNER_MARGIN: float = 0.2  # Margin from wall corners
 CUTOUT_WALL_DISTANCE_THRESHOLD: float = 0.1  # Maximum distance from wall for cutout to be valid
 
 
+def _boolean_difference_with_fallback(meshes: List[trimesh.Trimesh]) -> trimesh.Trimesh | List[trimesh.Trimesh] | None:
+    """Run a boolean difference using whichever trimesh backend is actually available."""
+    available_engines = getattr(trimesh.boolean, "_engines", {})
+    candidate_engines: List[str | None] = []
+
+    # Prefer explicit manifold if the installed trimesh version exposes it.
+    if "manifold" in available_engines:
+        candidate_engines.append("manifold")
+
+    for engine in (None, "auto", "blender", "scad"):
+        if engine in available_engines and engine not in candidate_engines:
+            candidate_engines.append(engine)
+
+    if not candidate_engines:
+        logger.warning("No trimesh boolean backends are registered; skipping wall cutout")
+        return None
+
+    last_error: Exception | None = None
+    for engine in candidate_engines:
+        engine_label = "auto" if engine is None else str(engine)
+        try:
+            return trimesh.boolean.difference(meshes, engine=engine)
+        except Exception as exc:
+            last_error = exc
+            logger.warning("Boolean difference failed with engine '%s': %s", engine_label, exc)
+
+    if last_error is not None:
+        logger.warning("All boolean cutout backends failed; skipping wall cutout: %s", last_error)
+    return None
+
+
 class Cutout:
     """
     Class to represent and manage wall cutouts (doors and windows).
@@ -399,12 +430,9 @@ def apply_cutout_from_object(
             logger.error(f"Cutout_box for {cutout.cutout_type} could not be repaired. Skipping cutout.")
             return current_wall_box
 
-    new_wall = trimesh.boolean.difference(
-        [current_wall_box, cutout_box],
-        engine="manifold"
-    )
+    new_wall = _boolean_difference_with_fallback([current_wall_box, cutout_box])
     if new_wall is None:
-        logger.error(f"All boolean engines failed for {cutout.cutout_type} cutout - returning original wall")
+        logger.warning(f"All boolean engines failed for {cutout.cutout_type} cutout - returning original wall")
         return current_wall_box
     elif isinstance(new_wall, list):
         return trimesh.util.concatenate(new_wall)

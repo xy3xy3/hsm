@@ -208,6 +208,7 @@ async def _process_assigned_wall_objects(
     scene_height: float,
     stage_suffix: str,
     scene: Scene,
+    session_config: Dict[str, str | None],
     room_bounds: Optional[Tuple[float, float, float, float]] = None,
     solver_fallback: bool = True,
 ) -> Tuple[List[SceneMotif], float]:
@@ -227,6 +228,7 @@ async def _process_assigned_wall_objects(
         scene_height: Height of the room
         stage_suffix: Suffix for file naming (e.g., "_initial", "_extra")
         scene: Scene instance
+        session_config: LLM session configuration for nested motif processing
         room_bounds: Room bounds for positioning
         solver_fallback: Whether to use solver fallback
 
@@ -414,6 +416,7 @@ async def _process_wall_objects_by_wall(
     model,
     scene_height: float,
     stage_suffix: str,
+    session_config: Dict[str, str | None],
     room_bounds: Optional[Tuple[float, float, float, float]],
     solver_fallback: bool,
     scene: Scene
@@ -431,6 +434,7 @@ async def _process_wall_objects_by_wall(
         model: ModelManager instance
         scene_height: Height of the room
         stage_suffix: Suffix for file naming (e.g., "_initial", "_extra")
+        session_config: LLM session configuration for nested motif processing
         room_bounds: Room bounds for positioning
         solver_fallback: Whether to use solver fallback
         scene: Scene instance
@@ -474,6 +478,7 @@ async def _process_wall_objects_by_wall(
             model=model,
             scene_height=scene_height,
             stage_suffix=stage_suffix,
+            session_config=session_config,
             room_bounds=room_bounds,
             solver_fallback=solver_fallback,
             scene=scene,
@@ -633,6 +638,7 @@ async def process_wall_objects(
                         model,
                         scene.room_height,
                         "_initial",
+                        session_config,
                         room_bounds,
                         True,  # solver_fallback
                         scene
@@ -723,6 +729,7 @@ async def process_wall_objects(
                         model,
                         scene.room_height,
                         "_extra",
+                        session_config,
                         room_bounds,
                         False,  # solver_fallback
                         scene
