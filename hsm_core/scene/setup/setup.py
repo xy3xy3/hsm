@@ -14,7 +14,7 @@ from omegaconf import DictConfig
 from shapely.geometry import Polygon
 
 from hsm_core.vlm.gpt import extract_json
-from hsm_core.vlm.vlm import create_session
+from hsm_core.vlm.vlm import create_session, get_session_config
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -32,12 +32,7 @@ from hsm_core.config import PROMPT_DIR, PROJECT_ROOT
 
 def _get_model_type_from_config(cfg: Optional[DictConfig]) -> str:
     """Get the VLM model type from configuration, defaulting to 'gpt'."""
-    if cfg is None:
-        return 'gpt'
-    llm_config = getattr(cfg, 'llm', None)
-    if llm_config is None:
-        return 'gpt'
-    return getattr(llm_config, 'model_type', 'gpt')
+    return get_session_config(cfg)["model_type"] or 'gpt'
 
 
 def _get_enable_spatial_optimization(cfg: DictConfig) -> bool:
@@ -264,17 +259,11 @@ def create_new_scene_from_config(
         Tuple of (scene, output_dir, room_session)
     """
     room_description = cfg.room.room_description
-    model_type = _get_model_type_from_config(cfg)
-    
-    # Get model name from config if available
-    model_name = None
-    if hasattr(cfg, 'llm') and hasattr(cfg.llm, 'model_name'):
-        model_name = cfg.llm.model_name
+    session_config = get_session_config(cfg)
     
     room_session = create_session(
         str(PROMPT_DIR / "scene_prompts_room.yaml"), 
-        model_type=model_type,
-        model_name=model_name
+        **session_config,
     )
     
     # Determine room type
@@ -334,12 +323,15 @@ def setup_scene_environment(
     sessions_dir = output_dir / "vlm_sessions"
     sessions_dir.mkdir(exist_ok=True)
 
-    model_type = _get_model_type_from_config(cfg) if cfg else 'gpt'
     from hsm_core.vlm.gpt import Session
     Session.set_global_output_dir(str(sessions_dir))
 
     if room_session is None:
-        room_session = create_session(str(PROMPT_DIR / "scene_prompts_room.yaml"), model_type=model_type, output_dir=str(sessions_dir))
+        room_session = create_session(
+            str(PROMPT_DIR / "scene_prompts_room.yaml"),
+            output_dir=str(sessions_dir),
+            **get_session_config(cfg),
+        )
 
     visualizer = SceneVisualizer(scene)
     
@@ -439,8 +431,10 @@ def perform_room_analysis_and_decomposition(
     )
     scene.room_details = room_details
 
-    model_type = _get_model_type_from_config(cfg) if cfg else 'gpt'
-    decompose_session = create_session(str(PROMPT_DIR / "scene_prompts_large.yaml"), model_type=model_type)
+    decompose_session = create_session(
+        str(PROMPT_DIR / "scene_prompts_large.yaml"),
+        **get_session_config(cfg),
+    )
     objects_response = decompose_session.send(
         "requirements_decompose", {"room_description": scene.room_description}, is_json=True, verbose=True
     )

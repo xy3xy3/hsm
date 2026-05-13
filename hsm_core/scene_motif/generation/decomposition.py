@@ -25,7 +25,8 @@ async def decompose_motif_async(
     max_attempts: int = 3,
     session: Optional[gpt.Session] = None,
     custom_logger: Optional[logging.Logger] = None,
-    output_dir: Optional[str] = None
+    output_dir: Optional[str] = None,
+    session_config: Optional[Dict[str, str | None]] = None,
 ) -> Tuple[Optional[str], Optional[Dict]]:
     """
     Asynchronously decompose a single motif into arrangement JSON.
@@ -50,7 +51,8 @@ async def decompose_motif_async(
             decompose_session = create_session(
                 str(PROMPT_DIR / "sm_prompts_decompose.yaml"),
                 output_dir=output_dir if output_dir else "",
-                prompt_info={"MOTIF_DEFINITIONS": yaml.safe_load(open(PROMPT_DIR / "motif_definitions.yaml"))["motifs"]}
+                prompt_info={"MOTIF_DEFINITIONS": yaml.safe_load(open(PROMPT_DIR / "motif_definitions.yaml"))["motifs"]},
+                **(session_config or {}),
             )
 
         log = custom_logger if custom_logger is not None else logger

@@ -25,7 +25,7 @@ To set up the environment, you need to have the following tools installed:
 2. **Set up environment variables:**
  
    You need to add the following API keys to the `.env` file:
-   - [Your OpenAI API key](https://platform.openai.com/api-keys)
+   - [Your OpenAI or OpenAI-compatible API key](https://platform.openai.com/api-keys)
    - [Your Hugging Face access token](https://huggingface.co/settings/tokens)
 
    ```bash
@@ -34,6 +34,15 @@ To set up the environment, you need to have the following tools installed:
 
    # Edit the .env file with your API keys
    vim .env  # or use your preferred editor
+   ```
+
+   Example `.env` fields:
+
+   ```bash
+   OPENAI_API_KEY=your_api_key
+   OPENAI_BASE_URL=https://api.openai.com/v1
+   OPENAI_MODEL_NAME=gpt-4o-2024-08-06
+   HF_TOKEN=your_huggingface_token
    ```
 
 3. **Run the automated setup script:**
@@ -151,6 +160,15 @@ python main.py -d "A small living room with a desk and a chair. The desk has a m
 ```
 
 To change the parameters, you can edit the `configs/scene/scene_config.yaml` file.
+
+You can also override the model in `configs/scene/scene_config.yaml`:
+
+```yaml
+llm:
+  model_type: gpt
+  model_name: gpt-4.1
+  base_url: https://your-openai-compatible-endpoint/v1
+```
 
 Note: Command line arguments will override the config file.
 

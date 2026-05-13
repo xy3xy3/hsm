@@ -27,6 +27,13 @@ mode:
 execution:
   result_dir: "results/single_run"
 
+# LLM / OpenAI-compatible API settings
+# model_name/base_url can also be set via .env using OPENAI_MODEL_NAME / OPENAI_BASE_URL
+llm:
+  model_type: "gpt"
+  model_name: null
+  base_url: null
+
 # Generation parameters
 # max_iterations: Maximum number of iterations to stop
 # target_occupancy_percent: Target surface saturation percentage to stop iterations

@@ -36,7 +36,7 @@ from hsm_core.scene.processing.processing_helpers import (
 )
 from hsm_core.scene.ablation import create_individual_scene_motifs_with_analysis
 
-from hsm_core.vlm.vlm import create_session
+from hsm_core.vlm.vlm import create_session, get_session_config
 from hsm_core.vlm.gpt import Session
 from hsm_core.vlm.utils import round_nested_values
 from hsm_core.retrieval.model.model_manager import ModelManager
@@ -258,6 +258,7 @@ async def _process_assigned_wall_objects(
         wall_motifs_processed, _ = await process_scene_motifs(
             wall_specific_specs, wall_motif_spec, output_dir, room_description, model,
             object_type=ObjectType.WALL,
+            session_config=session_config,
         )
         valid_wall_motifs = [m for m in wall_motifs_processed if m.object_specs and getattr(m.object_specs[0], 'wall_id', None) == wall_id]
         
@@ -516,10 +517,15 @@ async def process_wall_objects(
         Wall session object
     """
     logger.info("Processing Wall Objects")
+    session_config = get_session_config(cfg)
 
     if "wall" not in cfg.mode.object_types:
         logger.info("Wall objects not in processing types, skipping")
-        wall_session = create_session(PROMPT_DIR / "scene_prompts_wall.yaml", output_dir=str(sessions_dir))
+        wall_session = create_session(
+            PROMPT_DIR / "scene_prompts_wall.yaml",
+            output_dir=str(sessions_dir),
+            **session_config,
+        )
         return wall_session
     
     # Calculate room bounds from room polygon for accurate wall object positioning
@@ -532,7 +538,11 @@ async def process_wall_objects(
         except Exception as e:
             logger.warning(f"Could not extract room bounds from polygon: {e}")
     
-    wall_session = create_session(PROMPT_DIR / "scene_prompts_wall.yaml", output_dir=str(sessions_dir))
+    wall_session = create_session(
+        PROMPT_DIR / "scene_prompts_wall.yaml",
+        output_dir=str(sessions_dir),
+        **session_config,
+    )
     processed_wall_motifs_all_stages: List[SceneMotif] = [] # Combined list for all wall objects
     threshold_percent = cfg.parameters.wall_object_generation.target_occupancy_percent
     MAX_WALL_ITERATION = cfg.parameters.wall_object_generation.max_iterations

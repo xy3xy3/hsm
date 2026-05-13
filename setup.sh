@@ -256,12 +256,12 @@ validate_env_file() {
         return 1
     fi
 
-    # Check OPENAI_API_KEY
+    # Check OPENAI_API_KEY (used for OpenAI and compatible providers)
     OPENAI_KEY=$(grep "^OPENAI_API_KEY=" .env | cut -d'=' -f2 | sed 's/^"//' | sed 's/"$//')
-    if [ -z "$OPENAI_KEY" ] || [ "$OPENAI_KEY" = "your_openai_api_key_here" ]; then
+    if [ -z "$OPENAI_KEY" ] || [ "$OPENAI_KEY" = "your_openai_api_key_here" ] || [ "$OPENAI_KEY" = "your_openai_compatible_api_key_here" ]; then
         log_error "OPENAI_API_KEY is not set or using default placeholder!"
-        log_info "Please set your actual OpenAI API key in .env file"
-        log_info "Get your key from: https://platform.openai.com/api-keys"
+        log_info "Please set your actual OpenAI or compatible API key in .env file"
+        log_info "For OpenAI, get your key from: https://platform.openai.com/api-keys"
         return 1
     fi
 

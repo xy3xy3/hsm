@@ -44,7 +44,8 @@ async def batch_inference(
     log_to_terminal: bool = False,
     support_surface_constraints: Optional[Dict[str, Dict]] = None,
     skip_visual_validation: bool = False,
-    force_make_tight: bool = False
+    force_make_tight: bool = False,
+    session_config: Optional[Dict[str, str | None]] = None,
 ) -> List["SceneMotif"]:
     """Process multiple scene motifs in batch"""
     total_start = time.time()
@@ -88,7 +89,12 @@ async def batch_inference(
             save_name = f"{save_prefix}_{motif.id}" if save_prefix else motif.id
             motif_output_dir = output_dir / save_name
             motif_output_dir.mkdir(parents=True, exist_ok=True)
-            return await decompose_motif_async(motif, max_attempts=1, output_dir=str(motif_output_dir))
+            return await decompose_motif_async(
+                motif,
+                max_attempts=1,
+                output_dir=str(motif_output_dir),
+                session_config=session_config,
+            )
 
     first_decompose_task = asyncio.gather(
         *[first_decompose_with_semaphore(motif) for motif in multi_object_motifs],
@@ -122,6 +128,7 @@ async def batch_inference(
                 motif, furniture_mapping, output_dir, save_prefix, optimize,
                 force_make_tight, skip_visual_validation, log_to_terminal, support_surface_constraints,
                 first_decompose_result=first_decompose_result, max_attempts=3,
+                session_config=session_config,
             )
 
     process_tasks = [

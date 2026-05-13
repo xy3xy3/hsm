@@ -1,6 +1,7 @@
 from __future__ import annotations
 import base64
 import io
+import os
 from typing import List, Union
 
 from matplotlib.figure import Figure
@@ -11,22 +12,37 @@ from PIL import Image
 from .base_session import BaseVLMSession
 from .utils import extract_json, extract_code, extract_program
 
-MODEL: str = "gpt-4o-2024-08-06"
-# MODEL = "o4-mini"
-# MODEL = "gpt-4.1-2025-04-14"
-# MODEL: str = "gpt-5"
-CUSTOM_URL: str = "" # set to custom URL if needed
-
 DEFAULT_MODEL: str = "gpt-4o-2024-08-06"
 REASONING_MODELS: list[str] = ["o3-mini", "o4-mini", "gpt-5"]
 RETRY_COUNT: int = 10
 MAX_IMAGE_SIZE: int = 2048
 
+
+def _get_env_value(*keys: str) -> str | None:
+    """Return the first non-empty environment variable value."""
+    for key in keys:
+        value = os.getenv(key)
+        if value:
+            return value.strip()
+    return None
+
+
+def get_default_model_name() -> str:
+    """Resolve the default model name from environment or fallback."""
+    return _get_env_value("OPENAI_MODEL_NAME", "OPENAI_MODEL") or DEFAULT_MODEL
+
+
+def get_default_base_url() -> str | None:
+    """Resolve the OpenAI-compatible base URL from environment if provided."""
+    return _get_env_value("OPENAI_BASE_URL")
+
+
 class Session(BaseVLMSession):
     """GPT-based VLM session using OpenAI API."""
 
     def __init__(self, prompts_path, 
-                 model=MODEL, 
+                 model: str | None = None,
+                 base_url: str | None = None,
                  temperature: float = 0.7, 
                  output_dir: str = "", 
                  prompt_info: dict[str, str] | None = None) -> None:
@@ -34,8 +50,9 @@ class Session(BaseVLMSession):
         Initialize a GPT Session.
         """
         load_dotenv()
-        self.client = OpenAI(base_url=CUSTOM_URL if CUSTOM_URL else None)
-        self.model = model or DEFAULT_MODEL
+        resolved_base_url = base_url or get_default_base_url()
+        self.client = OpenAI(base_url=resolved_base_url or None)
+        self.model = model or get_default_model_name()
         super().__init__(prompts_path, self.model, temperature, output_dir, prompt_info)
     
     def send(self, task: str, prompt_info: dict[str, str] | None = None,
@@ -164,9 +181,10 @@ class Session(BaseVLMSession):
             params = {
                 "model": self.model,
                 "messages": self.past_messages,
-                "response_format": { "type": "json_object" } if json else None,
                 "temperature": self.temperature if self.model not in REASONING_MODELS else 1.0
             }
+            if json:
+                params["response_format"] = {"type": "json_object"}
 
             if self.model in REASONING_MODELS:
                 params["reasoning_effort"] = "high"

@@ -44,7 +44,8 @@ async def process_motif_with_visual_validation(
     log_to_terminal: bool,
     support_surface_constraints: Optional[Dict[str, Dict]],
     first_decompose_result: Optional[Tuple[Optional[str], Optional[Dict]]] = None,
-    max_attempts: int = 3
+    max_attempts: int = 3,
+    session_config: Optional[Dict[str, str | None]] = None,
 ) -> Optional["SceneMotif"]:
     """Generate a scene motif with visual feedback"""
     save_name = f"{save_prefix}_{motif.id}" if save_prefix else motif.id
@@ -58,7 +59,8 @@ async def process_motif_with_visual_validation(
     decompose_session = create_session(
         str(PROMPT_DIR / "sm_prompts_decompose.yaml"),
         output_dir=str(motif_output_dir),
-        prompt_info={"MOTIF_DEFINITIONS": yaml.safe_load(open(PROMPT_DIR / "motif_definitions.yaml"))["motifs"]}
+        prompt_info={"MOTIF_DEFINITIONS": yaml.safe_load(open(PROMPT_DIR / "motif_definitions.yaml"))["motifs"]},
+        **(session_config or {}),
     )
 
     for attempt in range(max_attempts):
@@ -104,7 +106,8 @@ async def process_motif_with_visual_validation(
 
             inference_session = create_session(
                 str(PROMPT_DIR / "sm_prompts_inference.yaml"),
-                output_dir=str(motif_output_dir)
+                output_dir=str(motif_output_dir),
+                **(session_config or {}),
             )
             # Reset context to prevent contamination from previous attempts
             success, final_arrangement, main_call, sub_arrangements, sub_arr_objs = await build_arrangement_from_json(
@@ -209,7 +212,8 @@ async def process_motif_with_visual_validation(
                 logger.info(f"Visualization generated successfully")
                 validate_session = create_session(
                     str(PROMPT_DIR / "sm_prompts_inference.yaml"),
-                    output_dir=str(motif_output_dir)
+                    output_dir=str(motif_output_dir),
+                    **(session_config or {}),
                 )
                 try:
                     logger.info(f"Sending scene motif to VLM for visual validation...")

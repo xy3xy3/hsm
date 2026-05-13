@@ -13,7 +13,7 @@ from typing import Optional
 from omegaconf import DictConfig
 import matplotlib.pyplot as plt
 
-from hsm_core.vlm.vlm import create_session
+from hsm_core.vlm.vlm import create_session, get_session_config
 from hsm_core.vlm.gpt import extract_json
 from hsm_core.config import PROMPT_DIR
 from hsm_core.scene.validation.validate import validate_small_object_response, validate_arrangement_smc
@@ -233,7 +233,10 @@ async def process_single_motif_constrained_small_objects(
     layer_data: dict, output_dir: str, cfg, model, all_object_specs: dict, vis_output_dir: Path
 ) -> None:
     """Process constrained small objects for a single motif."""
-    small_obj_session = create_session(str(PROMPT_DIR / "scene_prompts_small.yaml"))
+    small_obj_session = create_session(
+        str(PROMPT_DIR / "scene_prompts_small.yaml"),
+        **get_session_config(cfg),
+    )
 
     # Prepare layer_data for VLM using clean_layer_info
     layer_data_for_llm = clean_layer_info(layer_data)
@@ -609,7 +612,10 @@ async def process_unconstrained_small_objects_iteration(
 
             layer_data = remapped_layer_data
 
-        small_obj_session = create_session(str(PROMPT_DIR / "scene_prompts_small.yaml"))
+        small_obj_session = create_session(
+            str(PROMPT_DIR / "scene_prompts_small.yaml"),
+            **get_session_config(cfg),
+        )
 
         # Collect information about existing objects on each parent
         existing_objects_info = collect_existing_objects_info(scene, motif, current_motif_parent_name_to_id_map)
@@ -800,7 +806,8 @@ async def process_and_place_small_objects(scene, cfg, analysis, motif: SceneMoti
             room_description=scene.room_description,
             model=model,
             object_type=ObjectType.SMALL,
-            support_surface_constraints=support_surface_constraints
+            support_surface_constraints=support_surface_constraints,
+            session_config=get_session_config(cfg),
         )
 
         logger.info(f"Generated {len(initial_small_motifs)} initial scene motifs for {motif.id}: {[m.id for m in initial_small_motifs]}")
@@ -1096,5 +1103,3 @@ def check_support_json_exists(mesh_id: str) -> bool:
     """Check if support surface JSON exists for a given mesh ID."""
     from hsm_core.support_region.loader import check_support_json_exists as check_exists
     return check_exists(mesh_id)
-
-

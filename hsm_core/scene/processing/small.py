@@ -8,7 +8,7 @@ from omegaconf import DictConfig
 from hsm_core.scene.core.manager import Scene
 from hsm_core.config import PROMPT_DIR, PROJECT_ROOT
 from hsm_core.retrieval.model.model_manager import ModelManager
-from hsm_core.vlm.vlm import create_session
+from hsm_core.vlm.vlm import create_session, get_session_config
 from hsm_core.vlm.gpt import Session
 from hsm_core.utils import get_logger
 
@@ -36,10 +36,15 @@ async def process_small_objects(
         Session object used for small object processing
     """
     logger.info("Processing Small Objects...")
+    session_config = get_session_config(cfg)
 
     if "small" not in cfg.mode.object_types:
         logger.info("Small objects not in processing types, skipping...")
-        dummy_session = create_session(str(PROMPT_DIR / "scene_prompts_small.yaml"), output_dir=str(sessions_dir))
+        dummy_session = create_session(
+            str(PROMPT_DIR / "scene_prompts_small.yaml"),
+            output_dir=str(sessions_dir),
+            **session_config,
+        )
         return dummy_session
 
     try:
@@ -47,7 +52,11 @@ async def process_small_objects(
 
         if small_session is None:
             # Create a session for consistency with other object types
-            small_session = create_session(str(PROMPT_DIR / "scene_prompts_small.yaml"), output_dir=str(sessions_dir))
+            small_session = create_session(
+                str(PROMPT_DIR / "scene_prompts_small.yaml"),
+                output_dir=str(sessions_dir),
+                **session_config,
+            )
 
         logger.info("Small object processing completed")
         return small_session
@@ -57,5 +66,9 @@ async def process_small_objects(
         import traceback
         traceback.print_exc()
         
-        dummy_session = create_session(str(PROMPT_DIR / "scene_prompts_small.yaml"), output_dir=str(sessions_dir))
+        dummy_session = create_session(
+            str(PROMPT_DIR / "scene_prompts_small.yaml"),
+            output_dir=str(sessions_dir),
+            **session_config,
+        )
         return dummy_session

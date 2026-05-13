@@ -55,7 +55,8 @@ async def process_scene_motifs(
     room_description: str,
     model: Optional[Any] = None,
     object_type: ObjectType = ObjectType.UNDEFINED,
-    support_surface_constraints: Optional[Dict[str, Dict]] = None
+    support_surface_constraints: Optional[Dict[str, Dict]] = None,
+    session_config: Optional[Dict[str, str | None]] = None,
 ) -> Tuple[List[SceneMotif], Optional[Figure]]:
     """
     Process scene arrangements and create scene motifs from layout data.
@@ -133,7 +134,8 @@ async def process_scene_motifs(
         model=model,
         optimize=True,
         object_type=object_type,
-        support_surface_constraints=support_surface_constraints
+        support_surface_constraints=support_surface_constraints,
+        session_config=session_config,
     )
 
     if len(processed_unique_motifs) < 1:

@@ -20,7 +20,7 @@ from hsm_core.config import PROMPT_DIR
 import logging
 logger = logging.getLogger(__name__)
 
-from hsm_core.vlm.vlm import create_session
+from hsm_core.vlm.vlm import create_session, get_session_config
 from hsm_core.vlm.gpt import extract_json, Session
 from hsm_core.retrieval.model.model_manager import ModelManager
 from hsm_core.scene.processing.processing_helpers import (
@@ -32,9 +32,9 @@ from hsm_core.scene.processing.processing_helpers import (
 )
 from hsm_core.scene.io.export import save_scene
 
-def _create_floor_session(sessions_dir: str) -> Session:
+def _create_floor_session(sessions_dir: str, cfg: DictConfig | None = None) -> Session:
     """Create a session for large object processing."""
-    session = create_session(str(PROMPT_DIR / "scene_prompts_large.yaml"))
+    session = create_session(str(PROMPT_DIR / "scene_prompts_large.yaml"), **get_session_config(cfg))
     session.output_dir = sessions_dir
     return session
 
@@ -109,6 +109,7 @@ async def _process_motif_stage(
         room_description,
         model,
         object_type=ObjectType.LARGE,
+        session_config=get_session_config(cfg),
     )
 
     if not scene_motifs:
@@ -191,11 +192,11 @@ async def process_large_objects(
     if "large" not in cfg.mode.object_types:
         logger.info("Large objects not in processing types, skipping")
         # Create a dummy session for consistency
-        dummy_session = _create_floor_session(sessions_dir)
+        dummy_session = _create_floor_session(sessions_dir, cfg)
         return updated_plot, dummy_session
     
     if not hasattr(scene, 'scene_spec') or not scene.scene_spec:
-        decompose_session = _create_floor_session(sessions_dir)
+        decompose_session = _create_floor_session(sessions_dir, cfg)
         
         objects_response = decompose_session.send(
             "requirements_decompose", {"room_description": room_description}, is_json=True, verbose=True
@@ -208,7 +209,7 @@ async def process_large_objects(
         current_stage_motifs_solved: List[SceneMotif] = []  # Ensure variable is always defined
         
         if iteration == 0:
-            floor_session = _create_floor_session(sessions_dir)
+            floor_session = _create_floor_session(sessions_dir, cfg)
             current_stage_motifs, floor_session = await _process_motif_stage(
                 floor_session,
                 scene.scene_spec.large_objects,
@@ -230,7 +231,7 @@ async def process_large_objects(
             logger.info(
                 f"Adding more large objects to the scene, occupancy percent: {occupancy_percent}, cumulative occupancy: {cumulative_occupancy:.3f}"
             )
-            floor_session = _create_floor_session(sessions_dir)
+            floor_session = _create_floor_session(sessions_dir, cfg)
 
             objects_response = floor_session.send(
                 "large_furniture_extra",
