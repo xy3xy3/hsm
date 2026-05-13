@@ -73,6 +73,49 @@ ensure_project_root() {
     cd "$SCRIPT_DIR"
 }
 
+# Detect a usable runtime environment for HSM.
+# Preference order:
+# 1. Project-local .venv created by uv/venv
+# 2. Conda environment named "hsm"
+detect_runtime_env() {
+    RUNTIME_ENV_KIND=""
+    RUNTIME_ENV_LABEL=""
+    RUNTIME_ENV_ACTIVATE_CMD=""
+    RUNTIME_ENV_RUN_CMD=""
+
+    if [ -x ".venv/bin/python" ]; then
+        RUNTIME_ENV_KIND="venv"
+        RUNTIME_ENV_LABEL="project virtualenv (.venv)"
+        RUNTIME_ENV_ACTIVATE_CMD="source .venv/bin/activate"
+        if command_exists uv; then
+            RUNTIME_ENV_RUN_CMD="uv run python main.py -d 'your description'"
+        else
+            RUNTIME_ENV_RUN_CMD="python main.py -d 'your description'"
+        fi
+        return 0
+    fi
+
+    if [ -z "$CONDA_CMD" ]; then
+        if command_exists mamba; then
+            CONDA_CMD="mamba"
+        elif command_exists conda; then
+            CONDA_CMD="conda"
+        else
+            CONDA_CMD=""
+        fi
+    fi
+
+    if [ -n "$CONDA_CMD" ] && $CONDA_CMD env list | grep -q "^hsm "; then
+        RUNTIME_ENV_KIND="conda"
+        RUNTIME_ENV_LABEL="conda environment 'hsm'"
+        RUNTIME_ENV_ACTIVATE_CMD="$CONDA_CMD activate hsm"
+        RUNTIME_ENV_RUN_CMD="python main.py -d 'your description'"
+        return 0
+    fi
+
+    return 1
+}
+
 # delete function with confirmation
 safe_remove() {
     local target="$1"
@@ -155,6 +198,17 @@ download_from_hf_git() {
     
     # Try different clone methods with fallback
     if [ "$use_full_clone" = "true" ]; then
+        # If the target already exists but is not a git clone, fall back to hf download.
+        # This preserves support-surfaces or partial assets that may have been unpacked there first.
+        if [ -d "$target_dir" ] && [ -n "$(ls -A "$target_dir" 2>/dev/null)" ]; then
+            log_warning "$target_dir already exists and is not a git clone, using 'hf download'..."
+            if ! hf download "$repo_name" --repo-type=dataset --local-dir "$target_dir"; then
+                log_error "Failed to obtain $repo_name via hf download"
+                return 1
+            fi
+            return 0
+        fi
+
         # Full clone - try SSH first, then HTTPS, then hf download
         if ! git clone git@hf.co:datasets/$repo_name "$target_dir"; then
             log_warning "SSH clone failed, trying HTTPS..."
@@ -614,21 +668,20 @@ download_support_surfaces() {
 
 # Show usage instructions
 show_usage_instructions() {
-    # Detect conda/mamba if not already set
-    if [ -z "$CONDA_CMD" ]; then
-        if command_exists mamba; then
-            CONDA_CMD="mamba"
-        elif command_exists conda; then
-            CONDA_CMD="conda"
-        else
-            CONDA_CMD="conda"
-        fi
-    fi
+    detect_runtime_env >/dev/null 2>&1 || true
 
     log_info ""
     log_info "To generate a scene with a description using HSM, run the following commands:"
-    log_info "1. $CONDA_CMD activate hsm"
-    log_info "2. python main.py -d 'your description'"
+    if [ "$RUNTIME_ENV_KIND" = "venv" ]; then
+        log_info "1. $RUNTIME_ENV_ACTIVATE_CMD"
+        log_info "2. $RUNTIME_ENV_RUN_CMD"
+    elif [ "$RUNTIME_ENV_KIND" = "conda" ]; then
+        log_info "1. $RUNTIME_ENV_ACTIVATE_CMD"
+        log_info "2. $RUNTIME_ENV_RUN_CMD"
+    else
+        log_info "1. Create either the 'hsm' conda environment or a project-local '.venv'"
+        log_info "2. python main.py -d 'your description'"
+    fi
     log_info "The default output directory is results/single_run"
     log_info "Use python --help for all available generation options."
     log_info "For more details, please refer to the README.md."
@@ -642,12 +695,12 @@ verify_setup() {
 
     local issues=0
 
-    # Check conda environment
-    if ! $CONDA_CMD env list | grep -q "^hsm "; then
-        log_error "Conda environment 'hsm' not found"
-        issues=$((issues + 1))
+    # Check runtime environment
+    if detect_runtime_env; then
+        log_info "Runtime environment found: $RUNTIME_ENV_LABEL"
     else
-        log_info "Conda environment 'hsm' exists"
+        log_error "No supported runtime environment found. Expected either '.venv/bin/python' or conda environment 'hsm'"
+        issues=$((issues + 1))
     fi
 
     # Check data directory structure
